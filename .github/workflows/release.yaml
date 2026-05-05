@@ -96,7 +96,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy scan published image — gate on CRITICAL
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository_owner }}/brightdata-exporter@${{ steps.build.outputs.digest }}
           ignore-unfixed: true

@@ -55,13 +55,12 @@ class Metrics:
         )
         self.account_prepayment_usd = Gauge(
             f"{NAMESPACE}_account_prepayment_usd",
-            "Total prepayment deposited on the account (USD). "
-            "From /customer/balance.prepayment.",
+            "Total prepayment deposited on the account (USD). From /customer/balance.prepayment.",
             registry=self.registry,
         )
         self.account_pending_costs_usd = Gauge(
             f"{NAMESPACE}_account_pending_costs_usd",
-            "Costs accrued but not yet billed (USD). " "From /customer/balance.pending_costs.",
+            "Costs accrued but not yet billed (USD). From /customer/balance.pending_costs.",
             registry=self.registry,
         )
         self.account_spent_this_month_usd = Gauge(
@@ -90,7 +89,7 @@ class Metrics:
         )
         self.zone_cost_usd = Gauge(
             f"{NAMESPACE}_zone_cost_usd",
-            "Total cost (USD) for the zone over the configured period. " "From /zone/cost.cost.",
+            "Total cost (USD) for the zone over the configured period. From /zone/cost.cost.",
             labelnames=ZONE_LABELS,
             registry=self.registry,
         )
@@ -209,7 +208,7 @@ class Metrics:
         )
         self.api_requests_total = Counter(
             f"{NAMESPACE}_exporter_api_requests_total",
-            "Number of HTTP requests issued to Bright Data, by endpoint and " "response code.",
+            "Number of HTTP requests issued to Bright Data, by endpoint and response code.",
             labelnames=("endpoint", "code"),
             registry=self.registry,
         )

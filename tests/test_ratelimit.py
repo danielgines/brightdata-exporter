@@ -117,4 +117,4 @@ def test_acquirers_observe_distinct_slot_times():
     for i in range(1, n):
         gap = sorted_times[i] - sorted_times[i - 1]
         # 30ms floor (50ms interval - scheduler slack)
-        assert gap >= 0.03, f"acquirers {i-1} and {i} too close: {gap=}"
+        assert gap >= 0.03, f"acquirers {i - 1} and {i} too close: {gap=}"

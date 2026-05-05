@@ -78,7 +78,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Trivy filesystem scan (HIGH+CRITICAL, fixable)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -118,7 +118,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Trivy image scan — GATE on CRITICAL
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: brightdata-exporter:ci
           ignore-unfixed: true
@@ -128,7 +128,7 @@ jobs:
           exit-code: "1"   # FAIL the job on any unfixed CRITICAL
       - name: Trivy image scan — also report HIGH (no gate)
         if: always()
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: brightdata-exporter:ci
           ignore-unfixed: true
