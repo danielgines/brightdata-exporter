@@ -179,7 +179,7 @@ jobs:
         # to actually run, so the released image carries fresh Debian
         # security patches rather than serving a stale GHA cache layer.
         # Cost: ~5-10min per release; benefit: no phantom CVEs.
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
