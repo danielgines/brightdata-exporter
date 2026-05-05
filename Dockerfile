@@ -21,7 +21,7 @@ RUN uv build --wheel --out-dir /build/dist
 
 # ---------------------------------------------------------------------------
 
-FROM python:3.12-slim-trixie AS runtime
+FROM python:3.14-slim-trixie AS runtime
 
 # OCI image labels — surface the project identity in registry browsers
 # (GHCR, Docker Hub, Artifact Registry) without requiring a README pull.
