@@ -172,6 +172,43 @@ compose-logs:
 pre-commit:
     uv run pre-commit run --all-files
 
+# Push helm/artifacthub-repo.yml to GHCR as an OCI artifact so ArtifactHub
+# can verify ownership of oci://ghcr.io/danielgines/charts. One-off after
+# initial registration, then re-run only if owners/repositoryID change
+# (NOT on every chart release — ArtifactHub auto-scrapes those).
+#
+# Requires:
+#   - oras CLI (auto-installed to ~/.local/bin if missing)
+#   - gh auth token (logged in via `gh auth login`)
+#   - helm/artifacthub-repo.yml with the real repositoryID from artifacthub.io
+artifacthub-publish:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if grep -q REPLACE_AFTER_ARTIFACTHUB_REGISTRATION helm/artifacthub-repo.yml; then
+      echo "::error::helm/artifacthub-repo.yml still has the placeholder repositoryID."
+      echo "1. Sign in at https://artifacthub.io with GitHub"
+      echo "2. Add a Helm OCI repo pointing to oci://ghcr.io/danielgines/charts"
+      echo "3. Copy the assigned repositoryID into helm/artifacthub-repo.yml"
+      echo "4. Re-run 'just artifacthub-publish'"
+      exit 1
+    fi
+    if ! command -v oras >/dev/null 2>&1; then
+      echo "Installing oras to ~/.local/bin ..."
+      mkdir -p ~/.local/bin
+      ORAS_VERSION=$(gh api repos/oras-project/oras/releases/latest --jq '.tag_name' | tr -d v)
+      curl -sL "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
+        | tar xz -C ~/.local/bin oras
+      chmod +x ~/.local/bin/oras
+      export PATH="$HOME/.local/bin:$PATH"
+    fi
+    gh auth token | oras login ghcr.io --username "$(gh api user --jq .login)" --password-stdin
+    oras push \
+      ghcr.io/danielgines/charts/artifacthub-repo:latest \
+      --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+      helm/artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+    echo "✓ pushed artifacthub-repo metadata to ghcr.io/danielgines/charts/artifacthub-repo:latest"
+    echo "  ArtifactHub will pick it up on its next scan (~30 min)."
+
 # Release flow — bump pyproject + sync derived files + commit `chore(release): vX.Y.Z`
 # Usage:  just release 0.2.8
 # Then `git push` to fire CI → auto-tag → release pipeline.

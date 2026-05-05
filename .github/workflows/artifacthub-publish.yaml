@@ -1,0 +1,53 @@
+name: artifacthub-publish
+
+# Publishes helm/artifacthub-repo.yml to GHCR as an OCI artifact at
+# oci://ghcr.io/danielgines/charts/artifacthub-repo:latest so ArtifactHub
+# can verify ownership of the chart repo. One-off after initial
+# registration on artifacthub.io; re-run only if repositoryID or owners
+# change. Per-release Chart.yaml updates are auto-discovered by
+# ArtifactHub on its next scrape — this workflow is NOT part of the
+# release pipeline.
+#
+# Setup once:
+#   1. Sign in at https://artifacthub.io with GitHub
+#   2. Add a Helm OCI repo: oci://ghcr.io/danielgines/charts
+#   3. Copy the assigned repositoryID into helm/artifacthub-repo.yml
+#   4. Commit + push, then run this workflow via `gh workflow run` or UI
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to run with placeholder repositoryID
+        run: |
+          if grep -q REPLACE_AFTER_ARTIFACTHUB_REGISTRATION helm/artifacthub-repo.yml; then
+            echo "::error::helm/artifacthub-repo.yml has the placeholder repositoryID."
+            echo "::error::Register at https://artifacthub.io first, then commit the real ID."
+            exit 1
+          fi
+
+      - name: Install oras
+        uses: oras-project/setup-oras@v1
+        with:
+          version: 1.2.2
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            oras login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Push artifacthub-repo metadata
+        run: |
+          oras push \
+            ghcr.io/${{ github.repository_owner }}/charts/artifacthub-repo:latest \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            helm/artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+          echo "::notice::ArtifactHub will pick up the metadata on its next scrape (~30 min)."

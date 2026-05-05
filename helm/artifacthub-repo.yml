@@ -1,0 +1,22 @@
+# ArtifactHub repository metadata.
+#
+# This file is uploaded to GHCR as an OCI artifact at the path:
+#   oci://ghcr.io/danielgines/charts/artifacthub-repo:latest
+# and is fetched by ArtifactHub during repository scans to verify that
+# the publisher controls the repo (the repositoryID below must match
+# the one ArtifactHub assigned in its UI). Charts under
+# `oci://ghcr.io/danielgines/charts/<chart-name>` get indexed.
+#
+# Update + re-publish only when these fields change (rare):
+#   - repositoryID is rotated for any reason
+#   - owners list changes
+# Per-release chart updates (Chart.yaml version bumps) are picked up
+# automatically by ArtifactHub on its next scrape (every ~30 min) — you
+# don't republish this file each release.
+#
+# Push it via:    just artifacthub-publish
+# (or manually via the artifacthub-publish workflow on GitHub UI)
+repositoryID: REPLACE_AFTER_ARTIFACTHUB_REGISTRATION
+owners:
+  - name: Daniel Gines
+    email: 14093288+danielgines@users.noreply.github.com
