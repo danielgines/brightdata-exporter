@@ -73,10 +73,12 @@ jobs:
               if [[ "$SUBJECT" =~ ^chore\(release\):[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]+\(#[0-9]+\))?$ ]]; then
                 VERSION="${BASH_REMATCH[1]}"
                 echo "::notice::detected release commit $SUBJECT"
-                echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-                echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-                echo "ref=$WF_HEAD_SHA" >> "$GITHUB_OUTPUT"
-                echo "should_run=true" >> "$GITHUB_OUTPUT"
+                {
+                  echo "version=$VERSION"
+                  echo "tag=v$VERSION"
+                  echo "ref=$WF_HEAD_SHA"
+                  echo "should_run=true"
+                } >> "$GITHUB_OUTPUT"
               else
                 echo "::notice::head commit subject is not chore(release): vX.Y.Z — skipping"
                 echo "should_run=false" >> "$GITHUB_OUTPUT"
@@ -87,19 +89,23 @@ jobs:
                 echo "::error::version input must be X.Y.Z (got '$DISPATCH_VERSION')"
                 exit 1
               fi
-              echo "version=$DISPATCH_VERSION" >> "$GITHUB_OUTPUT"
-              echo "tag=v$DISPATCH_VERSION" >> "$GITHUB_OUTPUT"
-              echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
-              echo "should_run=true" >> "$GITHUB_OUTPUT"
+              {
+                echo "version=$DISPATCH_VERSION"
+                echo "tag=v$DISPATCH_VERSION"
+                echo "ref=${{ github.sha }}"
+                echo "should_run=true"
+              } >> "$GITHUB_OUTPUT"
               ;;
             push)
               # Tag-push path. ${GITHUB_REF_NAME} is the tag like 'v0.2.8'.
               TAG="$GITHUB_REF_NAME"
               VERSION="${TAG#v}"
-              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-              echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-              echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
-              echo "should_run=true" >> "$GITHUB_OUTPUT"
+              {
+                echo "version=$VERSION"
+                echo "tag=$TAG"
+                echo "ref=${{ github.sha }}"
+                echo "should_run=true"
+              } >> "$GITHUB_OUTPUT"
               ;;
           esac
 
@@ -310,8 +316,38 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.tag }}
           fetch-depth: 0
+
+      - name: Extract CHANGELOG section for this release
+        id: notes
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        # Pulls the body of `## [X.Y.Z]` until the next `## [` heading.
+        # Skips the heading line itself (the GitHub Release UI already
+        # shows the version in its title). Fails the job when the
+        # section is missing/empty so an operator who forgot to write
+        # the CHANGELOG entry can't ship an empty release page.
+        run: |
+          set -euo pipefail
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { capture=1; next }
+            capture && /^## \[/ { capture=0 }
+            capture
+          ' CHANGELOG.md > /tmp/notes.md
+
+          if [ ! -s /tmp/notes.md ] || ! grep -q '[[:graph:]]' /tmp/notes.md; then
+            echo "::error::CHANGELOG.md has no content under '## [$VERSION]'."
+            echo "::error::Add a section before tagging — release body must reflect what shipped."
+            exit 1
+          fi
+          {
+            echo "body<<__NOTES_EOF__"
+            cat /tmp/notes.md
+            echo "__NOTES_EOF__"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::extracted $(wc -l < /tmp/notes.md) lines from CHANGELOG.md"
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve.outputs.tag }}
           name: ${{ needs.resolve.outputs.tag }}
-          generate_release_notes: true
+          body: ${{ steps.notes.outputs.body }}

@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.10] — 2026-05-05
+
+### Changed — GitHub Release page now mirrors the curated CHANGELOG section
+
+Previously `softprops/action-gh-release@v2` was invoked with
+`generate_release_notes: true`, which builds the release page body from
+the list of commits since the previous tag. For a project that
+maintains a hand-curated `CHANGELOG.md` this duplicated the inferior
+auto-list right next to the link to the actual changelog.
+
+Replaced by an awk extraction step that pulls the `## [X.Y.Z]` section
+of `CHANGELOG.md` and passes it as the `body` to action-gh-release.
+Behavior:
+
+- Awk captures lines from the version heading until the next `## [`
+  heading (or EOF). The version heading itself is skipped — GitHub's
+  release UI already shows the version in its title.
+- If the section is missing or empty, the job fails with a clear
+  message: an operator who forgot to write the CHANGELOG entry can't
+  ship an empty release page. Image + Helm chart are already published
+  by the time this step runs, so the failure mode is "release artifact
+  exists but no Release page" — recoverable by a subsequent push fixing
+  the CHANGELOG, or by editing the GitHub Release manually.
+
+The Release page for this version (v0.2.10) demonstrates the new
+behavior — what you see here is exactly what landed in CHANGELOG.md
+under `## [0.2.10]`, not the auto-generated commit list.
+
 ## [0.2.9] — 2026-05-05
 
 ### Removed — `auto-tag.yaml` and the `RELEASE_PAT` requirement
