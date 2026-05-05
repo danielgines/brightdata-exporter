@@ -1,0 +1,74 @@
+version: 2
+# Dependabot keeps three dependency surfaces fresh — pinning is good, but
+# stale pins are worse than letting an automated bot bump them weekly under
+# review. PRs land with the upstream changelog/release notes inline so the
+# decision is "merge or not" rather than "find what changed".
+
+updates:
+  # ---------------------------------------------------------------------
+  # GitHub Actions — workflow `uses:` versions
+  # ---------------------------------------------------------------------
+  # Catches things like the trivy-action / cosign-installer / docker-*
+  # bumps that we'd otherwise notice only when CI breaks. Schedule weekly
+  # so PR queue stays manageable.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: "America/Sao_Paulo"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(actions)"
+    labels: ["dependencies", "github-actions"]
+    groups:
+      # Bundle minor + patch bumps into a single PR — major bumps still
+      # land separately so the release notes are easy to read.
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  # ---------------------------------------------------------------------
+  # Python deps — pyproject.toml runtime + dev extras
+  # ---------------------------------------------------------------------
+  # Critical: keeps `ruff` in pyproject in sync with the version pinned in
+  # `.pre-commit-config.yaml`. When this opens a `chore(pip)` PR for ruff,
+  # we ALSO bump the pre-commit pin in the same PR — see CONTRIBUTING note.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: "America/Sao_Paulo"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(pip)"
+    labels: ["dependencies", "python"]
+    groups:
+      python-minor-patch:
+        update-types: [minor, patch]
+
+  # ---------------------------------------------------------------------
+  # Container base image — Dockerfile FROM directives
+  # ---------------------------------------------------------------------
+  # Catches `python:3.12-slim-trixie` and `ghcr.io/astral-sh/uv:*` updates.
+  # When Debian ships a new point release of trixie or uv ships a new
+  # 0.8.x, we want a PR for it.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: "America/Sao_Paulo"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(docker)"
+    labels: ["dependencies", "docker"]
+
+  # NOTE — Helm charts are NOT supported by Dependabot. We only consume
+  # one third-party chart (none today) so this isn't a current gap. If we
+  # add upstream chart deps in helm/brightdata-exporter/Chart.yaml's
+  # `dependencies:`, switch to https://renovatebot.com which DOES support
+  # them — Dependabot only handles `helm-chart` for the chart's own version.

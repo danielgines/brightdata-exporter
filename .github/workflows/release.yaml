@@ -74,13 +74,19 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      - name: Build + push (multi-arch + SBOM + provenance)
+      - name: Build + push (multi-arch + SBOM + provenance, no cache)
         id: build
+        # `no-cache: true` mirrors the CI trivy-image rationale: forces the
+        # runtime stage's `apt-get upgrade` to run so the released image
+        # carries fresh Debian patches. Releases are infrequent enough
+        # that the extra build time (~5-10 min for multi-arch) is worth
+        # not shipping CVEs masked by stale GHA-cache layers.
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          no-cache: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Buildx attestations: SBOM (SPDX) + SLSA provenance.
@@ -92,8 +98,6 @@ jobs:
           build-args: |
             BRIGHTDATA_VERSION=${{ github.ref_name }}
             BRIGHTDATA_REVISION=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Trivy scan published image — gate on CRITICAL
         uses: aquasecurity/trivy-action@v0.36.0

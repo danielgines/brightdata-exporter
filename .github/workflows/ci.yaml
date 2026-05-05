@@ -106,17 +106,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Build image (no push)
+      - name: Build image (no cache, fresh apt-get upgrade)
+        # `no-cache: true` forces a clean build so the runtime stage's
+        # `apt-get upgrade` actually pulls the latest Debian security
+        # patches on every CI run. Otherwise the GHA cache may serve a
+        # layer where `apt-get upgrade` ran days ago, masking newly-
+        # disclosed CVEs. The ~30s rebuild cost buys an honest scan;
+        # without it Trivy reports CVEs that don't exist in a fresh
+        # build, and we either chase phantoms or learn to ignore the
+        # gate. The release.yaml build keeps caching on (it's the
+        # multi-arch one and a stale layer there is caught by the
+        # post-push trivy gate at no extra cost).
         uses: docker/build-push-action@v6
         with:
           context: .
           load: true
+          no-cache: true
           tags: brightdata-exporter:ci
           build-args: |
             BRIGHTDATA_VERSION=ci
             BRIGHTDATA_REVISION=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
       - name: Trivy image scan — GATE on CRITICAL
         uses: aquasecurity/trivy-action@v0.36.0
         with:

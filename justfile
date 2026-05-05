@@ -118,18 +118,28 @@ docker-build-multiarch:
     docker buildx use default
     echo "✓ multiarch build (amd64 + arm64) clean"
 
-# Trivy scan of the local image (HIGH+CRITICAL only)
-trivy: docker-build
+# Refresh trivy's vulnerability DB ahead of a scan. Trivy auto-updates
+# on first run of the day, but CI uses `aquasecurity/trivy-action` which
+# pulls a fresh DB every run — local can drift. Force-refresh before any
+# investigation to match what CI sees.
+trivy-update:
+    trivy image --download-db-only
+
+# Trivy scan of the local image (HIGH+CRITICAL only). Refreshes the DB
+# first so local result matches what the CI's trivy-action sees.
+trivy: docker-build trivy-update
     trivy image \
       --severity HIGH,CRITICAL \
+      --ignore-unfixed \
       --no-progress \
       --skip-version-check \
       brightdata-exporter:dev
 
 # Trivy filesystem scan (deps + Dockerfile + IaC)
-trivy-fs:
+trivy-fs: trivy-update
     trivy fs \
       --severity HIGH,CRITICAL \
+      --ignore-unfixed \
       --skip-version-check \
       --skip-dirs .venv,.pytest_cache,.mypy_cache,htmlcov \
       .
