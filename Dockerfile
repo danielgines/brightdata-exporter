@@ -55,10 +55,19 @@ RUN apt-get update \
 RUN groupadd --system --gid 1000 brightdata \
     && useradd --system --uid 1000 --gid 1000 --create-home --shell /sbin/nologin brightdata
 
-# Install the wheel produced by the builder stage.
+# Install the wheel produced by the builder stage, then REMOVE pip from
+# the runtime image. pip is needed exactly once (this command); the
+# running exporter never invokes it again. Keeping pip around exposed
+# us to its CVEs (e.g. CVE-2025-8869, CVE-2026-1703 — Trivy rates these
+# CRITICAL via NVD CVSS even though GHSA tracks them as MEDIUM/LOW). No
+# pip → no pip CVE noise + no install-time foot-gun if a future operator
+# `docker exec` and tries to `pip install` something into the running
+# container.
 COPY --from=builder /build/dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl \
-    && rm /tmp/*.whl
+    && rm /tmp/*.whl \
+    && pip uninstall -y pip setuptools \
+    && rm -rf /root/.cache/pip /usr/local/lib/python3.12/site-packages/pip* /usr/local/lib/python3.12/site-packages/setuptools*
 
 USER brightdata
 WORKDIR /home/brightdata
