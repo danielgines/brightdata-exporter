@@ -113,7 +113,7 @@ jobs:
     needs: [resolve]
     if: needs.resolve.outputs.should_run == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.resolve.outputs.ref }}
       - name: Validate version sources match the resolved version
@@ -150,7 +150,7 @@ jobs:
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.resolve.outputs.ref }}
       - uses: docker/setup-qemu-action@v3
@@ -227,7 +227,7 @@ jobs:
     needs: [resolve, version-gate, ghcr]
     if: needs.resolve.outputs.should_run == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.resolve.outputs.ref }}
       - uses: azure/setup-helm@v4
@@ -269,7 +269,7 @@ jobs:
     needs: [resolve, ghcr, helm-chart]
     if: needs.resolve.outputs.should_run == 'true' && github.event_name != 'push'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.resolve.outputs.ref }}
           fetch-depth: 0
@@ -306,7 +306,7 @@ jobs:
       needs.helm-chart.result == 'success' &&
       (needs.tag.result == 'success' || needs.tag.result == 'skipped')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.resolve.outputs.tag }}
           fetch-depth: 0
