@@ -16,7 +16,7 @@
 #
 # Push it via:    just artifacthub-publish
 # (or manually via the artifacthub-publish workflow on GitHub UI)
-repositoryID: REPLACE_AFTER_ARTIFACTHUB_REGISTRATION
+repositoryID: e13bcea5-31da-450d-99d7-663eb80dab0d
 owners:
   - name: Daniel Gines
     email: 14093288+danielgines@users.noreply.github.com
