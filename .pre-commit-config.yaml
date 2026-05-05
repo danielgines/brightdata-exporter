@@ -1,0 +1,148 @@
+# Pre-commit hooks for brightdata-exporter.
+#
+# Install once with:    just install
+# Or manually:          uv sync --extra dev && pre-commit install --install-hooks
+#
+# Two-stage strategy:
+#   pre-commit (every commit, fast):
+#     - ruff lint + format, mypy strict, yamllint, hadolint, actionlint,
+#       gitleaks, helm lint, built-in file fixers
+#   pre-push (slower, before sharing):
+#     - pytest full suite, helm template smoke render
+#
+# Run all hooks against all files (e.g. for CI parity):
+#   pre-commit run --all-files
+#
+# Bypass for an emergency commit (use sparingly, fix on the next push):
+#   git commit --no-verify
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
+repos:
+  # ---------------------------------------------------------------------
+  # Generic file hygiene
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.svg$
+      - id: end-of-file-fixer
+        exclude: \.svg$
+      - id: check-yaml
+        # Helm templates contain Go template directives that aren't valid
+        # YAML until rendered — yamllint also skips them. Workflow YAML
+        # uses anchors/multi-doc which check-yaml handles fine.
+        args: [--allow-multiple-documents, --unsafe]
+        exclude: ^helm/.*/templates/
+      - id: check-toml
+      - id: check-json
+        # Grafana dashboards are JSON, validate them too.
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # ---------------------------------------------------------------------
+  # Python — ruff (lint + format) replaces flake8 + black + isort
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # ---------------------------------------------------------------------
+  # YAML lint — strict on real config, lenient on Helm
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: [-c, .yamllint.yaml]
+
+  # ---------------------------------------------------------------------
+  # Dockerfile lint
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/AleksaC/hadolint-py
+    rev: v2.12.1b3
+    hooks:
+      - id: hadolint
+        args:
+          # Pin base images: we use tags (`python:3.12-slim-trixie`) by
+          # design instead of digests; ignoring DL3007 keeps that explicit.
+          # DL3008 (apt versions): we apt-get upgrade for fresh patches,
+          # pinning would defeat that.
+          - --ignore=DL3007
+          - --ignore=DL3008
+
+  # ---------------------------------------------------------------------
+  # GitHub Actions workflow lint
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.4
+    hooks:
+      - id: actionlint
+
+  # ---------------------------------------------------------------------
+  # Secret scanner — fails commit if a token-like string slips in
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  # ---------------------------------------------------------------------
+  # Local hooks — use uv / helm already installed in the dev env
+  # ---------------------------------------------------------------------
+  - repo: local
+    hooks:
+      # Single-source-of-truth version sync. pyproject.toml [project].version
+      # is canonical; this hook propagates it into __init__.py + Chart.yaml.
+      # When it rewrites a file, pre-commit fails the commit so the operator
+      # can `git add` the synced file and retry — this surfaces the change
+      # explicitly rather than letting a stale derived file slip through.
+      - id: sync-version
+        name: sync-version (pyproject → __init__.py + Chart.yaml)
+        language: system
+        entry: python3 scripts/sync-version.py
+        files: ^(pyproject\.toml|src/brightdata_exporter/__init__\.py|helm/brightdata-exporter/Chart\.yaml|scripts/sync-version\.py)$
+        pass_filenames: false
+
+      # mypy strict against src — config in pyproject.toml. Skipped on
+      # tests by mypy's own exclude in config; we don't enforce strict
+      # types in test fixtures.
+      - id: mypy
+        name: mypy strict (src)
+        language: system
+        entry: uv run mypy src
+        files: ^src/.*\.py$
+        pass_filenames: false
+
+      # Helm chart structural lint
+      - id: helm-lint
+        name: helm lint
+        language: system
+        entry: helm lint helm/brightdata-exporter
+        files: ^helm/
+        pass_filenames: false
+
+      # Helm template smoke — catches template errors that helm lint
+      # misses (undefined values, bad index, etc).
+      - id: helm-template-smoke
+        name: helm template smoke
+        language: system
+        entry: bash -c 'helm template t helm/brightdata-exporter --set auth.apiToken=test --set auth.apiAuthToken=test --set networkPolicy.enabled=true --set serviceMonitor.enabled=true >/dev/null'
+        files: ^helm/
+        pass_filenames: false
+
+      # Full test suite — only on push, not every commit.
+      - id: pytest
+        name: pytest (full suite)
+        language: system
+        entry: uv run pytest -q
+        pass_filenames: false
+        stages: [pre-push]

@@ -1,0 +1,34 @@
+# yamllint config — strict on operational YAML, lenient on Helm templates
+# (which contain Go template directives that aren't valid YAML until
+# rendered).
+extends: default
+
+rules:
+  # 80 cols is too tight for k8s manifests with realistic key paths.
+  line-length:
+    max: 200
+    level: warning
+  comments:
+    min-spaces-from-content: 1
+  document-start: disable
+  truthy:
+    allowed-values: ['true', 'false']
+    check-keys: false
+  # Allow `on:` at top level of GH Actions workflows (yamllint flags it
+  # because `on` is a YAML 1.1 boolean).
+  indentation:
+    spaces: 2
+    indent-sequences: true
+    check-multi-line-strings: false
+
+ignore: |
+  helm/brightdata-exporter/templates/
+  .venv/
+  .pytest_cache/
+  .mypy_cache/
+  .ruff_cache/
+  htmlcov/
+  build/
+  dist/
+  node_modules/
+  examples/grafana-provisioning/dashboards/

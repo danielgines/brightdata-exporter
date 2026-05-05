@@ -1,0 +1,206 @@
+# Default values for brightdata-exporter — Bright Data observability +
+# FinOps service. Every setting documented inline. Override only what's
+# needed.
+
+image:
+  repository: ghcr.io/danielgines/brightdata-exporter
+  tag: ""  # defaults to .Chart.appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Single-instance service — Bright Data API is rate-limited (1 req/s per
+# token) and the in-memory cache + single-flight semantics for /api/*
+# assume one process. Multiple replicas would duplicate scrapes AND fan
+# out cache misses independently, wasting API budget on both halves.
+replicaCount: 1
+
+# -- Required: Bright Data API token. Pick ONE of:
+#
+# 1. `existingSecret`: name of a pre-created Secret with key `BRIGHTDATA_API_TOKEN`.
+#    Recommended path — pair with ExternalSecret operator (ESO) so the token
+#    flows from Vault / AWS Secrets Manager / Azure Key Vault.
+# 2. `apiToken`: literal string in values.yaml. Convenient for local dev only;
+#    NEVER commit a real token. The chart wraps it in a Secret resource on
+#    your behalf.
+#
+# Optional: `apiAuthToken` (separate from the upstream API token) gates the
+# /api/* REST endpoints behind `Authorization: Bearer <token>`. When unset
+# (default), /api/* is unauthenticated — only safe in trusted networks.
+# Set it (and rotate periodically) for any cluster shared across teams.
+# When using existingSecret, add a key `BRIGHTDATA_API_AUTH_TOKEN` to the
+# same Secret (or use existingAuthSecret to point at a different one).
+auth:
+  existingSecret: ""           # e.g. "brightdata-exporter-credentials"
+  existingSecretKey: "BRIGHTDATA_API_TOKEN"
+  apiToken: ""                 # mutually exclusive with existingSecret
+  apiAuthToken: ""             # bearer for /api/*; empty = open
+  existingAuthSecret: ""       # if /api/* token lives in a separate Secret
+  existingAuthSecretKey: "BRIGHTDATA_API_AUTH_TOKEN"
+
+# Service behavior — passed straight through as env vars (BRIGHTDATA_*).
+config:
+  apiBase: "https://api.brightdata.com"
+
+  # --- Periodic /metrics collector ---
+  scrapeInterval: 300            # seconds between full scrape cycles
+  periodDays: 30                 # rolling window for cost/bandwidth queries
+  infoCacheSeconds: 3600         # TTL for /zone?zone=NAME results
+  apiRateLimitRps: 1.0           # max req/s to Bright Data (1 req/s/token policy)
+  apiTimeoutSeconds: 30          # per-request HTTP timeout
+  zonesFilter: ""                # regex; empty = all non-deleted zones
+  includeDisabled: false         # also scrape status=disabled zones
+
+  # --- Optional collectors (per-cycle API budget impact varies) ---
+  collectIpRosters: true         # /zone/ips + /zone/route_vips (plan-aware gated)
+  collectRecentIps: true         # /zone/recent_ips (1 cheap account-wide call)
+  collectIpHealth: true          # /zone/ips/unavailable + /proxies_pending_replacement
+  collectNetworkStatus: true     # /network_status/all (Bright Data's own health)
+  collectDomainConsumption: false  # /domains/bw + /domains/req — high cardinality
+
+  # --- On-demand REST /api/* service (FinOps, picker-driven) ---
+  apiEnabled: true               # mount /api/account, /api/zones, /api/zones/{name}
+  cacheTtlSeconds: 300           # TTL for /api/* response cache; 0 disables
+  cacheMaxSize: 1000             # LRU bound on cached /api/* keys
+  apiMinWindowDays: 1            # clamp /api/zones from/to to >= this many days
+                                 # (Bright Data zeroes out billing for sub-day ranges)
+
+  # --- Logging ---
+  logLevel: "info"               # debug | info | warning | error
+  logFormat: "json"              # json | console
+
+# HTTP server — /metrics AND /api/* both exposed on this port.
+service:
+  type: ClusterIP
+  port: 9617
+  annotations: {}
+
+# Prometheus Operator integration. Set true when you have prometheus-operator
+# installed and want it to discover the exporter automatically.
+serviceMonitor:
+  enabled: false
+  interval: 60s
+  scrapeTimeout: 30s
+  labels: {}
+  relabelings: []
+  metricRelabelings: []
+  honorLabels: false
+
+# Container resources — exporter is light: ~30MB resident, <1% CPU. The
+# defaults give plenty of headroom while staying friendly on small clusters.
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# Pod security defaults — non-root, read-only fs, no privilege escalation.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]
+
+# Liveness/readiness probes. Both endpoints return 200 while the HTTP
+# server is responding (no upstream check) — see README "Endpoints".
+# Upstream Bright Data health is signalled by the `brightdata_up` metric.
+probes:
+  liveness:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    httpGet:
+      path: /readyz
+      port: http
+    initialDelaySeconds: 2
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podLabels: {}
+podAnnotations: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# NetworkPolicy — restrict ingress to known scrapers and egress to the
+# Bright Data API + DNS. Opt-in by default because misconfigured policies
+# break scraping silently. Requires a CNI that enforces NetworkPolicy
+# (Calico, Cilium, Antrea, kube-router); CNIs like flannel/kindnet/AWS
+# VPC CNI without addons admit the resource but do NOT filter traffic.
+networkPolicy:
+  enabled: false
+
+  # --- Ingress: who can reach :9617 (/metrics + /api/*) ---
+  # When enabled=true and ingress.from is empty, ALL ingress is denied
+  # except from inside the same Pod (no peer = empty allow-list = deny).
+  # Override with concrete peer selectors. Each entry is a raw
+  # NetworkPolicyPeer object — copy upstream Kubernetes API as-is.
+  ingress:
+    from: []
+    # Common production pattern — uncomment and adapt:
+    # from:
+    #   # Allow Prometheus operator's prometheus pod from monitoring ns
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         kubernetes.io/metadata.name: monitoring
+    #     podSelector:
+    #       matchLabels:
+    #         app.kubernetes.io/name: prometheus
+    #   # Allow Grafana from grafana ns to call /api/*
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         kubernetes.io/metadata.name: grafana
+    #     podSelector:
+    #       matchLabels:
+    #         app.kubernetes.io/name: grafana
+
+  # --- Egress: where the exporter can talk to ---
+  # The pod MUST resolve DNS and reach api.brightdata.com (HTTPS). Bright
+  # Data publishes A records that rotate, so egress can't pin specific
+  # IPs — the pattern is "internet 443 except RFC1918". CNIs that support
+  # FQDN-based egress (Cilium, Calico Enterprise) can replace this with
+  # a domain rule via networkPolicy.egress.extra.
+  egress:
+    # Permit DNS lookups against kube-dns (CoreDNS / kube-dns both carry
+    # the `k8s-app: kube-dns` label by convention). Set false to write
+    # custom DNS rules in egress.extra.
+    allowDNS: true
+
+    # Permit HTTPS (TCP 443) to public internet, blocking RFC1918 ranges
+    # so the exporter can't accidentally talk to internal services.
+    allowBrightDataAPI: true
+
+    # Raw NetworkPolicyEgressRule list — appended verbatim to the policy.
+    # Use this for FQDN egress rules (CNI-specific) or to allow access
+    # to corporate proxies, internal Vault, etc.
+    extra: []
+    # Example — corp egress proxy on a known cluster IP:
+    # extra:
+    #   - to:
+    #       - ipBlock:
+    #           cidr: 10.42.0.10/32
+    #     ports:
+    #       - port: 8888
+    #         protocol: TCP

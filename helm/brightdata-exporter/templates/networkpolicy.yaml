@@ -1,0 +1,77 @@
+{{- /*
+  NetworkPolicy — restrict ingress to /metrics + /api/* + /healthz
+  to known scrapers and egress to the Bright Data API + DNS.
+
+  Empty ingress.from = deny all ingress (the empty rule list is the
+  Kubernetes "no peers allowed" form). To open up to the entire cluster
+  set `networkPolicy.enabled=false` and rely on cluster-wide policy.
+
+  Egress is split into three blocks: DNS (kube-dns), Bright Data API
+  (HTTPS to public internet excluding RFC1918), and any user-supplied
+  extras. The blocks are independently toggleable so a Cilium / Calico
+  Enterprise install can swap the IPv4 internet rule for an FQDN rule.
+*/ -}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "brightdata-exporter.fullname" . }}
+  labels:
+    {{- include "brightdata-exporter.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "brightdata-exporter.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  {{- /* Ingress: only listed peers can reach :9617. */ -}}
+  {{- with .Values.networkPolicy.ingress.from }}
+  ingress:
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: http
+          protocol: TCP
+  {{- else }}
+  # ingress.from is empty — deny all ingress except policy-internal.
+  ingress: []
+  {{- end }}
+  egress:
+    {{- if .Values.networkPolicy.egress.allowDNS }}
+    # DNS resolution against kube-dns / CoreDNS in kube-system. The label
+    # `k8s-app: kube-dns` is the upstream convention regardless of which
+    # DNS implementation is actually serving the cluster.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- end }}
+    {{- if .Values.networkPolicy.egress.allowBrightDataAPI }}
+    # HTTPS to public internet for api.brightdata.com. Blocks RFC1918 to
+    # prevent the exporter from accidentally reaching internal services
+    # (defense in depth — the upstream URL itself is configurable).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16  # link-local incl. cloud metadata services
+      ports:
+        - port: 443
+          protocol: TCP
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.extra }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

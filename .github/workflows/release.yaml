@@ -1,0 +1,172 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write     # GitHub Release creation
+  packages: write     # GHCR push (image + Helm OCI chart)
+  id-token: write     # Cosign keyless signing via GitHub OIDC
+  attestations: write # Provenance attestations attached to image
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Pre-flight — version metadata in pyproject.toml + Chart.yaml MUST
+  # match the git tag we're releasing. Catching drift here is cheaper
+  # than discovering it post-publish.
+  # ---------------------------------------------------------------------
+  version-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate pyproject + Chart.yaml match the tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          PYPROJECT=$(grep '^version' pyproject.toml | head -1 | cut -d'"' -f2)
+          CHART_VERSION=$(grep '^version:' helm/brightdata-exporter/Chart.yaml | awk '{print $2}')
+          CHART_APP=$(grep '^appVersion:' helm/brightdata-exporter/Chart.yaml | awk '{print $2}' | tr -d '"')
+          INIT_PY=$(grep '__version__' src/brightdata_exporter/__init__.py | cut -d'"' -f2)
+          echo "tag:           v${TAG}"
+          echo "pyproject:     v${PYPROJECT}"
+          echo "Chart version: v${CHART_VERSION}"
+          echo "Chart appVer:  v${CHART_APP}"
+          echo "__init__.py:   v${INIT_PY}"
+          fail=0
+          for v in "$PYPROJECT" "$CHART_VERSION" "$CHART_APP" "$INIT_PY"; do
+            if [ "$v" != "$TAG" ]; then
+              echo "::error::version drift — '$v' != tag '$TAG'"
+              fail=1
+            fi
+          done
+          [ "$fail" = "0" ]
+
+  # ---------------------------------------------------------------------
+  # Container image — build, push, sign with Cosign keyless, attest
+  # provenance + SBOM via Buildx, post-publish Trivy gate.
+  # ---------------------------------------------------------------------
+  ghcr:
+    runs-on: ubuntu-latest
+    needs: [version-gate]
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags + labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/brightdata-exporter
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build + push (multi-arch + SBOM + provenance)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Buildx attestations: SBOM (SPDX) + SLSA provenance.
+          # `mode=max` records all build steps in the provenance attestation.
+          provenance: mode=max
+          sbom: true
+          # Populate OCI labels declared in Dockerfile so registry browsers
+          # show the right version + commit at-a-glance.
+          build-args: |
+            BRIGHTDATA_VERSION=${{ github.ref_name }}
+            BRIGHTDATA_REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy scan published image — gate on CRITICAL
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/brightdata-exporter@${{ steps.build.outputs.digest }}
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "1"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+
+      - name: Sign image with Cosign (keyless via GitHub OIDC)
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          # Sign by digest (not by tag) — tags are mutable, digests are not.
+          # Cosign's keyless mode pulls a Sigstore certificate via GitHub
+          # OIDC and posts the signature to the public Rekor transparency
+          # log; verifiers later check the cert's Subject claim against
+          # the workflow identity.
+          IMAGE="ghcr.io/${{ github.repository_owner }}/brightdata-exporter"
+          DIGEST="${{ steps.build.outputs.digest }}"
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          echo "Verify locally with:"
+          echo "  cosign verify ${IMAGE}@${DIGEST} \\"
+          echo "    --certificate-identity-regexp 'https://github\\.com/${{ github.repository }}/.*' \\"
+          echo "    --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+
+  # ---------------------------------------------------------------------
+  # Helm chart — package + push as OCI artifact to GHCR, alongside the
+  # image. One registry, two artifact types, single auth path.
+  # ---------------------------------------------------------------------
+  helm-chart:
+    runs-on: ubuntu-latest
+    needs: [version-gate, ghcr]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.0
+
+      - name: Helm registry login (GHCR)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io \
+              --username "${{ github.actor }}" \
+              --password-stdin
+
+      - name: Package + push chart
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p /tmp/chart-out
+          helm package helm/brightdata-exporter -d /tmp/chart-out
+          helm push \
+            "/tmp/chart-out/brightdata-exporter-${VERSION}.tgz" \
+            "oci://ghcr.io/${{ github.repository_owner }}/charts"
+          echo "Install with:"
+          echo "  helm install bd oci://ghcr.io/${{ github.repository_owner }}/charts/brightdata-exporter \\"
+          echo "    --version ${VERSION} \\"
+          echo "    --set auth.existingSecret=brightdata-credentials"
+
+  # ---------------------------------------------------------------------
+  # GitHub Release page — auto-generated from commits since previous tag.
+  # ---------------------------------------------------------------------
+  github-release:
+    runs-on: ubuntu-latest
+    needs: [ghcr, helm-chart]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

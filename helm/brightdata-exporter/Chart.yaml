@@ -1,0 +1,36 @@
+apiVersion: v2
+name: brightdata-exporter
+description: |
+  Bright Data observability + FinOps service. Single binary, two interfaces:
+
+    - Prometheus exporter on /metrics — account balance, per-zone cost /
+      traffic / request totals over a fixed rolling window. Drives alerts
+      and time-series trends via Mimir / Thanos / VictoriaMetrics.
+    - REST service on /api/account, /api/zones?from=&to= — on-demand JSON
+      with the from/to range driven by the dashboard time picker. Pairs
+      with Grafana's Infinity datasource so users pick "last 7 days",
+      "MTD", or any custom range and the numbers reflect THAT range.
+
+  Two complementary Grafana dashboards ship in examples/: a FinOps
+  investigation dashboard (Infinity, picker-driven) and an Operations
+  dashboard (Prometheus, continuous monitoring).
+type: application
+version: 0.2.8
+appVersion: "0.2.8"
+keywords:
+  - brightdata
+  - prometheus
+  - exporter
+  - rest-api
+  - finops
+  - observability
+  - proxy
+  - monitoring
+  - grafana
+home: https://github.com/danielgines/brightdata-exporter
+sources:
+  - https://github.com/danielgines/brightdata-exporter
+maintainers:
+  - name: Daniel Gines
+    url: https://github.com/danielgines
+icon: https://brightdata.com/favicon.ico

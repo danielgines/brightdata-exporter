@@ -1,0 +1,144 @@
+name: auto-tag
+
+# Watches `chore(release): vX.Y.Z` commits on main and creates the tag
+# `vX.Y.Z` after CI passes. Pushing the tag fires `release.yaml`.
+#
+# Pattern (manual side):
+#   1. Edit `CHANGELOG.md` with the new version section
+#   2. Bump version in `pyproject.toml`,
+#      `src/brightdata_exporter/__init__.py`,
+#      `helm/brightdata-exporter/Chart.yaml` (version + appVersion)
+#   3. Commit with subject `chore(release): vX.Y.Z` (Conventional Commits)
+#   4. Push DIRECTLY to main (PR squash adds `(#42)` suffix — handled by
+#      this workflow's regex anyway, but direct push avoids the loop of
+#      review-and-merge for a release commit)
+#
+# Auto side:
+#   - This workflow runs only after `ci` succeeds on the same commit.
+#   - It validates the four version sources match the subject's `vX.Y.Z`.
+#   - It creates an annotated tag and pushes it.
+#   - The tag push fires `release.yaml` which builds, scans, signs, and
+#     publishes the image + Helm chart.
+#
+# IMPORTANT — `RELEASE_PAT` secret is REQUIRED:
+#   GitHub forbids `GITHUB_TOKEN`-pushed tags from triggering other
+#   workflows (anti-recursion). To make the tag push fire `release.yaml`,
+#   this workflow uses a Personal Access Token stored in the secret
+#   `RELEASE_PAT`. Without it the tag is created but no release runs.
+#
+#   Setup (one-time, repo settings → Secrets and variables → Actions):
+#     - Create a fine-grained PAT scoped to this repo, with permissions:
+#         Contents: Read and write
+#     - Set its value as the `RELEASE_PAT` repository secret.
+#   A GitHub App installation with the same scope is the more durable
+#   alternative once you have several auto-tagged repos.
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write   # create + push tag
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    # Only run when CI succeeded on the same head commit.
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Inspect head commit subject
+        id: subject
+        env:
+          MSG: ${{ github.event.workflow_run.head_commit.message }}
+        run: |
+          set -euo pipefail
+          # `head_commit.message` is the FULL message; we only need the
+          # subject (first line) for the regex. Match both direct-push
+          # (`chore(release): v0.2.8`) and squash-merge with PR suffix
+          # (`chore(release): v0.2.8 (#42)`) shapes.
+          SUBJECT=$(printf '%s\n' "$MSG" | head -1)
+          echo "subject=$SUBJECT"
+          if [[ "$SUBJECT" =~ ^chore\(release\):[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]+\(#[0-9]+\))?$ ]]; then
+            VERSION="v${BASH_REMATCH[1]}"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "match=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::detected release commit for $VERSION"
+          else
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::head commit subject is not a release commit; skipping"
+          fi
+
+      - name: Skip when not a release commit
+        if: steps.subject.outputs.match != 'true'
+        run: exit 0
+
+      - name: Verify RELEASE_PAT is configured
+        if: steps.subject.outputs.match == 'true'
+        env:
+          PAT: ${{ secrets.RELEASE_PAT }}
+        run: |
+          if [ -z "${PAT}" ]; then
+            echo "::error::RELEASE_PAT secret is empty or missing."
+            echo "::error::Without it, the tag push won't trigger release.yaml."
+            echo "::error::Set RELEASE_PAT to a fine-grained PAT with 'Contents: Read and write' on this repo."
+            exit 1
+          fi
+
+      - name: Checkout at the release commit (PAT for tag push)
+        if: steps.subject.outputs.match == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Verify version sources match the commit version
+        if: steps.subject.outputs.match == 'true'
+        env:
+          VERSION: ${{ steps.subject.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="${VERSION#v}"
+          PYPROJECT=$(grep '^version' pyproject.toml | head -1 | cut -d'"' -f2)
+          INIT_PY=$(grep '__version__' src/brightdata_exporter/__init__.py | cut -d'"' -f2)
+          CHART_VERSION=$(grep '^version:' helm/brightdata-exporter/Chart.yaml | awk '{print $2}')
+          CHART_APP=$(grep '^appVersion:' helm/brightdata-exporter/Chart.yaml | awk '{print $2}' | tr -d '"')
+          echo "tag (target):  v${TAG}"
+          echo "pyproject:     v${PYPROJECT}"
+          echo "__init__.py:   v${INIT_PY}"
+          echo "Chart version: v${CHART_VERSION}"
+          echo "Chart appVer:  v${CHART_APP}"
+          fail=0
+          for v in "$PYPROJECT" "$INIT_PY" "$CHART_VERSION" "$CHART_APP"; do
+            if [ "$v" != "$TAG" ]; then
+              echo "::error::version mismatch — '$v' != tag '$TAG'"
+              fail=1
+            fi
+          done
+          [ "$fail" = "0" ]
+
+      - name: Reject if tag already exists
+        if: steps.subject.outputs.match == 'true'
+        env:
+          VERSION: ${{ steps.subject.outputs.version }}
+        run: |
+          if git rev-parse "${VERSION}" >/dev/null 2>&1; then
+            echo "::error::tag ${VERSION} already exists — bump CHANGELOG + version files to a new version before retrying."
+            exit 1
+          fi
+
+      - name: Create and push tag
+        if: steps.subject.outputs.match == 'true'
+        env:
+          VERSION: ${{ steps.subject.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Annotated tag — readable in `git tag -n`, carries the version
+          # in both name and message for tooling that looks at either.
+          git tag -a "${VERSION}" -m "Release ${VERSION}"
+          git push origin "${VERSION}"
+          echo "::notice::pushed tag ${VERSION} — release.yaml should now fire on the tag event"

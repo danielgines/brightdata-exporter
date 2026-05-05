@@ -1,0 +1,605 @@
+# Changelog
+
+All notable changes to this project are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
+adheres to [Semantic Versioning](https://semver.org/).
+
+## [0.2.8] — 2026-05-05
+
+### Added — single-source-of-truth version sync
+
+Operator now bumps version in **one place** (`pyproject.toml`) and
+tooling propagates. Previously the same version had to be edited in
+four files (`pyproject.toml`, `src/brightdata_exporter/__init__.py`,
+`helm/brightdata-exporter/Chart.yaml.version`, and `Chart.yaml.appVersion`),
+making drift easy and `just release`-style helpers necessary as
+mitigation.
+
+- **`scripts/sync-version.py`** (new) — reads the canonical version
+  from `pyproject.toml [project].version` and rewrites the literal
+  in `__init__.py` (`__version__`) and `Chart.yaml` (`version` +
+  `appVersion`). Idempotent; exits 0 when sources already align,
+  exits 1 when it rewrote a file (the standard pre-commit "I fixed
+  something, please re-stage and retry" UX).
+- **Pre-commit hook** wired to run on edits to any of the four files,
+  so manual edits that desync them are caught at commit time.
+- **`just release X.Y.Z`** new recipe — validates working tree is
+  clean, you're on `main`, and `CHANGELOG.md` has a matching
+  `## [X.Y.Z]` section; bumps `pyproject.toml`; runs `sync-version.py`
+  to propagate; stages everything; creates the
+  `chore(release): vX.Y.Z` commit. One operator command per release.
+
+The `version-gate` job in `release.yaml` and the in-workflow
+validation in `auto-tag.yaml` are kept as defense-in-depth — they
+catch the (unlikely) case of someone bumping `pyproject.toml`,
+bypassing pre-commit (`--no-verify`), and pushing directly. Costs
+~5s of CI, blocks a broken release.
+
+## [0.2.7] — 2026-05-05
+
+### Security & supply chain — full release pipeline hardening
+
+This release closes the remaining items from the security audit and
+formalizes the development → release workflow.
+
+#### NetworkPolicy template in Helm chart
+
+Opt-in `networkPolicy.enabled=true` (default false for back-compat)
+emits a Kubernetes NetworkPolicy that:
+
+- **Ingress** — only the peers configured in
+  `networkPolicy.ingress.from` (raw NetworkPolicyPeer list) can reach
+  port `:9617`. Empty list = deny all ingress.
+- **Egress** — three independently toggleable blocks:
+  - `allowDNS` (default true) — UDP/TCP 53 to kube-dns / CoreDNS in
+    kube-system (label `k8s-app=kube-dns`)
+  - `allowBrightDataAPI` (default true) — TCP 443 to public internet,
+    with RFC1918 + link-local CIDRs **excluded** so the pod cannot
+    accidentally reach internal services
+  - `extra` — raw NetworkPolicyEgressRule list for FQDN egress (Cilium
+    / Calico Enterprise) or corp-proxy carve-outs
+
+Validated end-to-end in kind+Calico: 4 ingress permutations (allowed
+peer 200, wrong namespace timeout, wrong pod label timeout, allowed
+peer + bearer 200) and 3 egress permutations (DNS works, BD API
+reachable, RFC1918 blocked).
+
+#### CI workflow — Trivy scanning with SARIF upload
+
+`.github/workflows/ci.yaml` now includes:
+
+- `trivy-fs` — filesystem scan (deps + Dockerfile + Helm + IaC),
+  HIGH+CRITICAL fixable, **report-only** (uploads SARIF to GitHub
+  Security tab; doesn't fail the job)
+- `trivy-image` — builds the container, then **gates** on any unfixed
+  CRITICAL CVE; HIGH is reported but not gated. Two SARIF uploads
+  per run (one per severity slice).
+- `lint-test` job extended with `mypy strict` + `ruff format --check`
+  for parity with the local `just ci` bundle
+
+#### Release workflow — SBOM + provenance + Cosign keyless signing
+
+`.github/workflows/release.yaml` rebuilt around four jobs gated by a
+`version-gate`:
+
+- **version-gate** — fails the release if `pyproject.toml`,
+  `src/brightdata_exporter/__init__.py`, and Helm `Chart.yaml`
+  (version + appVersion) don't all match the git tag. Single source
+  of truth, refuses to ship drifted metadata.
+- **ghcr** — multi-arch build (amd64 + arm64) with **buildx
+  attestations**:
+  - SLSA provenance (`provenance: mode=max`) — full build trace
+  - SBOM (`sbom: true`) — SPDX format, attached as image attestation
+  Then post-push Trivy scan **gates on CRITICAL** (catches anything
+  introduced between local and CI). Then **Cosign keyless signs** the
+  image by digest using GitHub OIDC (no key rotation; identity is
+  bound to the workflow run via Sigstore certificate). README documents
+  the verification command.
+- **helm-chart** — packages and pushes the chart as an OCI artifact
+  to `ghcr.io/<owner>/charts/brightdata-exporter`. One registry, two
+  artifact types, single auth path.
+- **github-release** — auto-generated notes from commits since the
+  prior tag.
+
+The PyPI publishing job was removed — distribution channel is
+container + Helm chart, not pip. Easier to keep the release surface
+focused.
+
+### Local development experience
+
+- **`.pre-commit-config.yaml`** (new) — 18 hooks across two stages:
+  pre-commit (trailing-whitespace, end-of-file-fixer, check-yaml/toml/
+  json, check-merge-conflict, check-added-large-files, detect-private-
+  key, mixed-line-ending, ruff, ruff-format, yamllint, hadolint,
+  actionlint, gitleaks, mypy strict, helm lint, helm template smoke)
+  and pre-push (full pytest suite). `--no-verify` discouraged but
+  available as escape hatch.
+- **`.yamllint.yaml`** (new) — strict on operational YAML, ignores
+  Helm templates which contain Go template directives that aren't
+  valid YAML until rendered.
+- **`justfile`** (new) — 24 recipes grouping setup / python / helm /
+  container / stack / ci / cleanup. `just install` does the one-shot
+  setup, `just ci` runs the same checks the CI does (~5s), `just
+  ci-full` adds docker build + Trivy + multi-arch (~2 min).
+- **`pyproject.toml`** — `pre-commit>=3.7` added to the dev extra.
+- **mypy strict** — fixed 30 pre-existing `union-attr` violations in
+  `client.py` parsers via the intermediate-variable + explicit-type
+  pattern. The `# type: ignore[arg-type]` in `config.py` was unused
+  and removed. `server.py` adds a `per-file-ignores` for `N802` to
+  preserve the stdlib `BaseHTTPRequestHandler.do_<METHOD>` dispatch
+  convention.
+- **ruff lint** — 8 instances of `isinstance(x, (int, float))`
+  modernized to `isinstance(x, int | float)` (UP038, Python 3.10+ syntax).
+
+### Distribution metadata
+
+- Helm chart Chart.yaml `version` + `appVersion` synced to the
+  release tag (was drifted at 0.2.5 while pyproject was 0.2.6); the
+  release workflow now blocks any future drift via `version-gate`.
+
+### Auto-tag — `chore(release): vX.Y.Z` → tag → release
+
+`.github/workflows/auto-tag.yaml` (new): watches pushes to `main`,
+waits for `ci` to succeed, then if the commit subject matches
+`chore(release): vX.Y.Z`, validates that all four version sources
+match `X.Y.Z`, and creates + pushes the `vX.Y.Z` annotated tag. The
+tag push fires `release.yaml`.
+
+Subject regex tested locally against the two production shapes:
+`chore(release): v0.2.8` (direct push) and
+`chore(release): v0.2.8 (#42)` (squash-merge with PR suffix). Both
+match; non-release subjects (`chore: bump`, `feat: ...`, malformed
+versions) are correctly rejected.
+
+Requires a `RELEASE_PAT` repository secret (fine-grained PAT scoped
+to this repo with `Contents: Read and write`). GitHub blocks
+`GITHUB_TOKEN`-pushed tags from triggering subsequent workflows
+to prevent recursion; without the PAT the tag is created but the
+release workflow doesn't fire. The workflow fails fast with a clear
+error message when `RELEASE_PAT` is unset, so misconfiguration is
+visible.
+
+README "Releasing" section documents the manual side (bump four
+sources, write CHANGELOG entry, commit `chore(release): vX.Y.Z`,
+direct-push to main) and the automated side (validation, tag push,
+multi-arch + signed publish + Helm OCI).
+
+## [0.2.6] — 2026-05-05
+
+### Added — bearer auth on /api/* (CRITICAL security gap closed)
+
+`/api/*` was unauthenticated and CORS-wide-open: anyone with network
+access to the pod could read account balance, per-zone spend, IP
+rosters, and usage limits. The audit flagged this as the highest-impact
+gap in the security posture (above any container hardening or trivy
+finding).
+
+New env var `BRIGHTDATA_API_AUTH_TOKEN`:
+
+- **Empty (default)** — `/api/*` is open. Back-compat with v0.2.x;
+  emits a `WARNING api.auth_disabled` log line at startup so this
+  posture is visible in the deployment logs.
+- **Set** — every `/api/*` request must include
+  `Authorization: Bearer <token>`. Mismatch returns HTTP 401 with
+  `WWW-Authenticate: Bearer realm="brightdata-exporter"`. Comparison
+  uses `hmac.compare_digest` to defeat timing oracles.
+
+Security boundary unchanged for `/metrics`, `/healthz`, `/readyz`, `/`
+— these are never auth-gated. Prometheus scrape contract assumes
+unauth `/metrics` on a trusted network; if your network isn't
+trusted, isolate via NetworkPolicy.
+
+CORS now also returns `Access-Control-Allow-Headers: Authorization`
+so cross-origin Grafana clients can include the bearer header.
+
+### Helm chart support
+
+- New values: `auth.apiAuthToken` (inline literal) /
+  `auth.existingAuthSecret` + `auth.existingAuthSecretKey` (separate
+  Secret) / can also live in the same Secret as `BRIGHTDATA_API_TOKEN`
+  under the `BRIGHTDATA_API_AUTH_TOKEN` key
+- `templates/secret.yaml` renders both keys when inline values are
+  provided
+- `templates/deployment.yaml` mounts the optional bearer token via
+  `secretKeyRef.optional: true` so the pod still boots if the key is
+  absent
+
+### Tests
+
+`tests/test_server.py` (new, 16 tests) — first coverage for the
+`server.py` boundary, addressing a P1 gap from the v0.2.5 test-engineer
+audit:
+
+- `_verify_bearer` unit tests (correct token, wrong token, missing
+  header, wrong scheme, case-insensitive Bearer, empty server token
+  rejects everything)
+- End-to-end via real `MetricsServer` on ephemeral port
+  (`127.0.0.1:0`) covering: /metrics + /healthz + /readyz unauth even
+  when token set, /api/* open when unset, 401 + WWW-Authenticate when
+  token set + missing/wrong/Basic-scheme, 200 when correct, OPTIONS
+  preflight passes without auth, index page open, unknown path 404
+
+Test count: 89 → 105 (+16).
+
+### Documentation
+
+- README "REST service" section gains an Authentication subsection
+  documenting the gate and Grafana Infinity setup
+- README config table adds `BRIGHTDATA_API_AUTH_TOKEN`
+- Helm `values.yaml` documents the three secret-source patterns
+
+## [0.2.5] — 2026-05-05
+
+### Fixed — three correctness bugs surfaced by code/test audits
+
+**Rate limiter sleep-inside-lock (high impact under concurrency).**
+`RateLimiter.acquire()` was holding the lock during `time.sleep()`, so
+concurrent acquirers serialized on the lock for the full sleep duration
+instead of forming an ordered queue. With 4 threads at 10 rps the wall
+clock ran ~4× the interval (each thread waited the full pace) instead of
+~3× (3 gaps between 4 slots). Fix: reserve the slot inside the lock,
+release, then sleep until the reserved instant.
+
+**Single-flight cache could hang followers forever.** `_Promise.wait()`
+had no timeout — a leader thread that hung mid-compute (Bright Data API
+hang, leader killed by SIGKILL) would stall every follower indefinitely,
+slowly exhausting the HTTP server's thread pool. Fix: bounded wait with
+a configurable `single_flight_timeout` (default 60s), raises
+`TimeoutError` when exceeded.
+
+**`make_key` collision between bare path and empty param dict.** Both
+`make_key("/api/account")` and `make_key("/api/zones", {"from": ""})`
+produced the key `"/api/account"` (the `make_key("/x", {})` case
+collapsed to just `"/x"`). On Grafana variable interpolation that
+produces empty params, this could cross-route cache hits between
+unrelated endpoints. Fix: empty-dict and all-blank-values now produce
+`"path?"` (with trailing `?`) so they cannot collide with a bare path.
+
+### Refactored — pricing logic deduplicated
+
+The `rate_display` + `billing_model` helpers existed in both
+`collector.py` and `service.py` (with identical bodies and a comment
+acknowledging the duplication). Extracted to `brightdata_exporter/pricing.py`
+with a single `pricing_pair(cost) -> (display, model)` entry point; both
+the periodic `/metrics` Info series and the on-demand `/api/zones`
+response now route through the same code path so they cannot drift.
+
+### Tests
+
+- `tests/test_ratelimit.py` (new, 6 tests) — concurrency contract for the
+  shared limiter, including the "do not serialize on lock" regression
+- `tests/test_pricing.py` (new, 8 tests) — every billing scheme, plus the
+  consistency contract between `pricing_display` and `billing_model`
+- `tests/test_cache.py` — added `test_make_key_distinguishes_bare_path_from_empty_param_dict`,
+  `test_make_key_distinguishes_paths_under_same_params`,
+  `test_invalid_single_flight_timeout_raises`,
+  `test_followers_time_out_when_leader_hangs`
+- `tests/test_client.py` — added 4 upstream-failure pins (429, 5xx,
+  ReadTimeout, non-JSON 200) so a future "let's add retries" PR has a
+  regression net
+- `tests/test_collector.py` — added parametrized matrix tests for the
+  plan-aware gates covering every known plan_product (8 cases for
+  `_zone_supports_ips_per_country`, 8 for `_zone_supports_dedicated_vips`)
+- `tests/test_service.py` — added boundary test
+  `test_zones_window_passes_through_at_exactly_min_days` for the
+  off-by-one bait in `_clamp_window`
+
+Test count: 51 → 89 (+38).
+
+### Documentation
+
+- README "Configuration" entry for `BRIGHTDATA_COLLECT_IP_ROSTERS` now
+  documents the plan-aware gating shipped in v0.2.4
+- README "Operations dashboard" health row description updated to
+  "Last scrape" (the panel rename from v0.2.3, previously omitted)
+- README SDK-comparison endpoint count corrected (9 → 14)
+
+### Security — base image bookworm → trixie
+
+Bumped both Dockerfile stages to Debian 13 (trixie):
+
+- `ghcr.io/astral-sh/uv:0.5-python3.12-bookworm-slim` →
+  `ghcr.io/astral-sh/uv:0.8-python3.12-trixie-slim` (builder)
+- `python:3.12-slim-bookworm` → `python:3.12-slim-trixie` (runtime)
+
+Trivy delta on the resulting image (HIGH+CRITICAL only):
+
+| Severity | bookworm | trixie  | delta |
+|----------|----------|---------|-------|
+| CRITICAL | 3        | **0**   | −3    |
+| HIGH     | 11       | 7       | −4    |
+| TOTAL    | 14       | 7       | **−50%** |
+
+Eliminated outright (all CRITICAL): glibc CVE-2026-0861, libgnutls30
+CVE-2026-33845, libsqlite3-0 CVE-2025-7458, zlib1g CVE-2023-45853
+(`will_not_fix` in bookworm). All four had no fix available on
+bookworm; trixie ships the patched versions.
+
+The 7 remaining HIGH are all `status=affected` with no upstream fix
+yet (libcap2 TOCTOU, libsystemd0/libudev1 IPC RCE, ncurses 4-pkg
+buffer overflow). None are reachable in this container's threat
+model — no TTY (ncurses unused), no D-Bus / systemd interaction,
+`capabilities drop ALL` + `runAsNonRoot` neutralizes libcap escalation
+vectors. They are platform noise rather than exploitable bugs.
+
+Image size: ~144 MB (was ~150 MB on bookworm).
+
+Smoke test validated post-rebuild: `/healthz` 200, `/metrics` 200,
+container starts under 4s.
+
+Also added `apt-get upgrade -y` to the runtime stage's apt block. As
+of this build it produces zero delta (the 7 remaining HIGH all have
+`fix=-` in the trixie repo), but it future-proofs the image: any
+subsequent `docker build` automatically picks up Debian security
+patches without waiting for the upstream `python:3.12-slim-trixie`
+tag to be rebuilt. Build cost: ~10-30s; layer is cleaned via
+`apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*`.
+
+### Distribution metadata — service identity, not just exporter
+
+The Helm chart, raw k8s manifests, and Dockerfile still described the
+project as a pure Prometheus exporter — written in v0.1.0 before the
+v0.2.0 pivot to hybrid exporter+REST. Brought the deployment surface in
+line with the actual identity:
+
+- **`helm/brightdata-exporter/Chart.yaml`** — description rewritten to
+  reflect both interfaces; version + appVersion bumped from 0.1.0 to
+  0.2.5; keywords expanded with `rest-api`, `finops`, `observability`,
+  `grafana`.
+- **`helm/brightdata-exporter/values.yaml`** — `config:` block split
+  into 4 labelled sections (Periodic /metrics collector, Optional
+  collectors, On-demand REST /api/* service, Logging) and now exposes
+  9 previously-missing env vars: `collectIpRosters`, `collectRecentIps`,
+  `collectIpHealth`, `collectNetworkStatus`, `collectDomainConsumption`,
+  `apiEnabled`, `cacheTtlSeconds`, `cacheMaxSize`, `apiMinWindowDays`.
+  Without these, `helm install` couldn't configure the FinOps half at all.
+- **`helm/brightdata-exporter/templates/deployment.yaml`** — env block
+  passes through all 9 new vars.
+- **`Dockerfile`** — added OCI image labels
+  (`org.opencontainers.image.{title,description,version,revision,...}`)
+  so registry browsers (GHCR, Docker Hub) show the correct identity.
+  Version + revision injected via `BRIGHTDATA_VERSION` and
+  `BRIGHTDATA_REVISION` build args.
+- **`.github/workflows/release.yaml`** — release pipeline now passes
+  `BRIGHTDATA_VERSION=${{ github.ref_name }}` and
+  `BRIGHTDATA_REVISION=${{ github.sha }}` so published images carry
+  accurate metadata.
+- **`examples/kubernetes/deployment.yaml`** — header comment
+  enumerates both `/metrics` and `/api/*` surfaces.
+
+## [0.2.4] — 2026-05-05
+
+### Fixed — bug, not noise: spurious scrape_errors from plan-incompatible endpoints
+
+Every scrape cycle was calling `/zone/ips?ip_per_country=true` and
+`/zone/route_vips` on every active zone, even when the zone's plan
+deterministically rejects those endpoints. On a 14-zone account this
+generated **~430 spurious upstream errors per hour**, all counted in
+`brightdata_exporter_scrape_errors_total` — making the metric useless
+for actual alerting because the floor was permanent noise.
+
+Empirical verification against `api.brightdata.com` (2026-05-05) maps
+plan compatibility:
+
+- `/zone/ips?ip_per_country=true` returns **400 "Wrong zone plan"** for
+  rotating-residential, SERP, mobile, and unblocker plans — even when
+  those plans have allocated VIPs (e.g. `vips_type=domain, vip=1`)
+- `/zone/route_vips` returns **403 "Vip routes not found"** for
+  datacenter zones and **422** for rotating-residential without VIPs;
+  only `vips_type=domain AND vip=true` zones return 200
+
+The collector now reads `plan` info from `/zone?zone=NAME` (already
+fetched + cached every cycle) and skips the call when the gate says no.
+Two new helpers in `collector.py`:
+
+- `_zone_supports_ips_per_country(info)` — false for `res_rotating`,
+  `serp`, `mobile`, `unblocker` plan products
+- `_zone_supports_dedicated_vips(info)` — true only when
+  `plan.vips_type == "domain"` AND `plan.vip == true`
+
+Side effects:
+
+- `brightdata_exporter_scrape_errors_total` returns to **~0/h** for
+  healthy accounts → alert thresholds become meaningful
+- API rate-limit budget freed: ~28 calls/cycle saved on a 14-zone
+  rotating-heavy account (2 endpoints × ~14 plan-mismatched zones), so
+  scrape duration drops noticeably
+
+### Tests
+
+- Five new tests in `test_collector.py` covering the gate matrix:
+  rotating-residential skips both, datacenter skips only route_vips,
+  dedicated-VIP residential calls route_vips even though product is
+  rotating, SERP skips both, and verification that the
+  `scrape_errors_total` series stays absent for skipped endpoints.
+
+## [0.2.3] — 2026-05-05
+
+### Fixed — misleading "API auth" panel in Operations dashboard
+
+The Operations dashboard had a stat panel labelled "API auth" backed by
+`brightdata_account_can_make_requests`. Empirical verification against
+`api.brightdata.com` showed that gauge does NOT measure API-token
+validity — Bright Data's `/status` endpoint reports
+`can_make_requests=true` only when called with valid **proxy-network**
+credentials (zone username + proxy password). Called without proxy
+password (the exporter's pattern) it returns
+`can_make_requests=false` with `auth_fail_reason="zone_not_found"` or
+`"wrong_password"` even on a healthy account where every other endpoint
+is returning 200. So the panel rendered "BLOCKED" red while the
+exporter was happily scraping.
+
+Replaced with a "Last scrape" stat: seconds since the last successful
+scrape cycle, computed as
+`time() - brightdata_exporter_last_scrape_timestamp_seconds`. Green up
+to 600s (2× default scrape interval), orange to 900s, red beyond.
+
+### Changed — clarified `brightdata_account_can_make_requests` docstring
+
+Metric HELP text now warns that the gauge reflects proxy-network creds,
+not API-token validity, and points callers at `brightdata_up` for
+API-side health. The metric is kept (callers that *do* exercise the
+proxy plane via a custom endpoint may want it) but its meaning is
+documented honestly.
+
+### Documentation
+
+- README "Limitations" section gained a new bullet documenting the
+  `/status` proxy-vs-API-auth pitfall, so consumers don't misinterpret
+  `can_make_requests=0` as a token problem.
+
+## [0.2.2] — 2026-05-05
+
+### Changed — split single dashboard into FinOps + Operations
+
+Replaced the single mixed-datasource dashboard with two dashboards that
+each own one half of the hybrid architecture:
+
+- **`examples/grafana-dashboard.json` — Bright Data — Account & Zones**
+  (FinOps investigation). 100% Infinity datasource. Picker-driven. Account
+  row is now `/api/account` (snapshot — picker irrelevant), Zones table
+  unchanged, and the old Trends row was replaced by a new **Cost
+  breakdown** row with bar charts (top 10 by spend, top 10 by traffic)
+  and donut charts (spend by Pool Type, spend by zone Type) — all over
+  the picked range.
+
+- **`examples/grafana-dashboard-operations.json` — Bright Data —
+  Operations** (continuous monitoring, new). 100% Prometheus. Picker
+  selects the visible window of recorded samples, not the upstream query
+  range. Includes account drawdown, derived `$/day burn rate`, top 10
+  zones by cost / traffic, $/GB drift, exporter health (`up`, scrape
+  duration, scrape errors), API auth status, IPs unavailable, proxies
+  pending replacement, Bright Data network status, and zone counts by
+  status.
+
+Why the split: a single dashboard mixing Prometheus + Infinity caused a
+foot-gun where snapshot tiles (Account row, originally Prometheus
+`instant: true`) returned "No data" whenever the time picker was set to
+a past range outside Prometheus's recorded window — even though the
+underlying value (account balance) is timeless. The split puts each
+question on the right datasource: snapshot → Infinity, evolution →
+Prometheus.
+
+The two dashboards link to each other via the dashboard header.
+
+### Removed
+
+- The `${datasource}` template variable from the FinOps dashboard
+  (no longer needed — datasource is implied by panel target).
+
+## [0.2.1] — 2026-05-05
+
+### Fixed — empty tables on short time-picker windows
+
+`/api/zones` and `/api/zones/{name}` now expand the requested `from`/`to`
+window when the caller asks for a range below `BRIGHTDATA_API_MIN_WINDOW_DAYS`
+(default `1`). Bright Data's billing data rolls up daily — a request whose
+range falls inside the current day returns zeroed cost/traffic regardless
+of actual usage, which made the Grafana Zones table render an empty
+all-zero result whenever the dashboard was on "Last 5 minutes" / "Last 15
+minutes" / etc.
+
+The clamp expands `from` backward to `to - api_min_window_days`; `to` is
+preserved. The response's per-row `period` field reflects the queried
+range so the caller can see what was actually executed. Set
+`BRIGHTDATA_API_MIN_WINDOW_DAYS=0` to disable.
+
+### Configuration additions
+
+- `BRIGHTDATA_API_MIN_WINDOW_DAYS` (default `1`) — minimum from/to window
+  enforced by the REST handlers.
+
+## [0.2.0] — 2026-05-05
+
+### Added — REST service mode (FinOps / ad-hoc queries)
+
+Pivoted the project from a single-mode Prometheus exporter into a
+hybrid observability + FinOps service. Same single binary, two interfaces:
+
+- **Prometheus exporter** (`/metrics`, unchanged) — still pulls account
+  balance and per-zone cost/traffic/request totals on a fixed rolling
+  window for alerts, time-series trends, and long-term retention.
+
+- **REST service** (`/api/*`, new) — on-demand JSON queries that take a
+  `from=&to=` range driven by the caller (e.g. a Grafana time picker).
+  Endpoints:
+    * `GET /api/account` — balance + status + zone counts (snapshot)
+    * `GET /api/zones?from=&to=` — list zones with cost/traffic/requests
+      for the requested range
+    * `GET /api/zones/{name}?from=&to=` — single-zone detail incl.
+      IP roster
+
+The REST service exists because the Prometheus model doesn't naturally
+support "user picks an arbitrary date range and the answer reflects that
+range". A periodic exporter scrapes a fixed window — the time picker
+only chooses which sample of that window to display, not the window
+itself. For FinOps investigations ("how much did I spend Mar 14–Apr 22?")
+that distinction matters.
+
+### Added — supporting modules
+
+- `cache.py` — TTL cache with single-flight semantics. Concurrent dashboard
+  viewers requesting the same `/api/*` key collapse onto one upstream
+  call; the rest wait for the result. Bounded LRU eviction.
+- `ratelimit.py` — promoted out of `collector.py` so the periodic
+  collector AND the on-demand service handlers share one rate limiter,
+  collectively respecting Bright Data's 1 req/s/token limit.
+- `service.py` — dispatcher + handlers for `/api/*`, with status/regex
+  filters and per-plan-type rate formatting (`$X/GB` vs `$X/CPM` vs
+  `$X/month` vs `$X/VIP`).
+- `server.py` — routes `/api/*` to the service module, adds `Access-
+  Control-Allow-Origin: *` so Grafana on a different host can call.
+
+### Added — Grafana dashboard
+
+`examples/grafana-dashboard.json` Zones table now consumes
+`/api/zones?from=…&to=…` via the Infinity datasource. The dashboard's
+time picker drives the actual upstream window — switch from "last 7 days"
+to "last 30 days" and the cost / traffic / request numbers change.
+Account row + Trends row stay on Prometheus.
+
+### Configuration additions
+
+- `BRIGHTDATA_API_ENABLED` (default `true`) — set `false` to run as
+  Prometheus-only.
+- `BRIGHTDATA_CACHE_TTL_SECONDS` (default `300`) — cache lifetime for
+  `/api/*` responses. `0` disables.
+- `BRIGHTDATA_CACHE_MAX_SIZE` (default `1000`) — LRU bound on cached keys.
+
+## [0.1.0] — 2026-05-05
+
+Initial release.
+
+### Added
+
+- Bright Data API client covering `/customer/balance`,
+  `/zone/get_all_zones`, `/zone/get_active_zones`, `/zone?zone=NAME`
+  (alias `/zone/info`), `/zone/cost`, `/zone/bw`, `/zone/status`. Schema
+  verified empirically against `api.brightdata.com` on 2026-05-05.
+- Prometheus metric registry exposing 17 metric families across account,
+  per-zone, and exporter introspection scopes.
+- Periodic collector with rate limiter (1 req/s default) and TTL cache
+  for zone info (1h default).
+- HTTP server with `/metrics`, `/healthz`, `/readyz`, `/`.
+- Pydantic-settings env-driven config (12 settings, all `BRIGHTDATA_*`
+  prefixed).
+- Multi-stage Dockerfile (~150MB final image, non-root, read-only fs).
+- Helm chart with Deployment, Service, ServiceAccount, ServiceMonitor
+  (opt-in), and Secret (opt-in — recommended path is `auth.existingSecret`
+  with ExternalSecret operator).
+- Docker Compose example bundling exporter + Prometheus + Grafana with
+  a starter dashboard provisioned automatically.
+- Kubernetes raw manifests for Helm-free deployments.
+- Test suite (16 tests) covering client schema parsing, error paths, and
+  full collector cycles against pytest-httpx mocks.
+
+### Notes
+
+- Bright Data does not expose request-level logs via API; the dashboard's
+  "Event Log" tab is UI-only. The exporter cannot fill that gap.
+- Cost rates (`brightdata_zone_rate_usd_per_gb`) are derived as
+  `cost / gbs` over the configured period — meaningful for pay-per-GB
+  zones, undefined for unlimited-bandwidth subscription plans.
+- The `security` label in `brightdata_zone_info` falls back from
+  `plan.vips_type` to `plan.ips_type` — best effort against the
+  undocumented "Security" column shown in the Bright Data UI.

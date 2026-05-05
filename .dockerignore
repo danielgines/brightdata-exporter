@@ -1,0 +1,26 @@
+# Build hygiene — keep the docker context lean.
+.venv/
+.git/
+.github/
+.idea/
+.vscode/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+helm/
+examples/
+tests/
+docs/
+*.md
+!README.md
+.env
+.env.*
+*.token
+secrets.local.*
+docker-compose.override.yaml

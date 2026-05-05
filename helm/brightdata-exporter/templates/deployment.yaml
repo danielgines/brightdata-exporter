@@ -1,0 +1,142 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "brightdata-exporter.fullname" . }}
+  labels:
+    {{- include "brightdata-exporter.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate  # only one replica is meaningful — no need for rolling updates
+  selector:
+    matchLabels:
+      {{- include "brightdata-exporter.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "brightdata-exporter.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if not .Values.serviceMonitor.enabled }}
+        # When ServiceMonitor isn't used, fall back to the legacy
+        # prometheus.io/* annotations so vanilla Prometheus deployments
+        # discover the exporter via service annotations.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.service.port | quote }}
+        prometheus.io/path: "/metrics"
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "brightdata-exporter.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: exporter
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 9617
+              protocol: TCP
+          env:
+            # Token from the Secret (chart-managed or existing).
+            - name: BRIGHTDATA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "brightdata-exporter.tokenSecretName" . }}
+                  key: {{ include "brightdata-exporter.tokenSecretKey" . }}
+            {{- $authSecretName := include "brightdata-exporter.authTokenSecretName" . }}
+            {{- if $authSecretName }}
+            # Optional bearer token for /api/* endpoints. When unset (Secret
+            # key absent OR auth.apiAuthToken / auth.existingAuthSecret both
+            # empty), /api/* runs unauthenticated.
+            - name: BRIGHTDATA_API_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $authSecretName }}
+                  key: {{ include "brightdata-exporter.authTokenSecretKey" . }}
+                  optional: true
+            {{- end }}
+            - name: BRIGHTDATA_API_BASE
+              value: {{ .Values.config.apiBase | quote }}
+            - name: BRIGHTDATA_SCRAPE_INTERVAL
+              value: {{ .Values.config.scrapeInterval | quote }}
+            - name: BRIGHTDATA_PERIOD_DAYS
+              value: {{ .Values.config.periodDays | quote }}
+            - name: BRIGHTDATA_INFO_CACHE_SECONDS
+              value: {{ .Values.config.infoCacheSeconds | quote }}
+            - name: BRIGHTDATA_API_RATE_LIMIT_RPS
+              value: {{ .Values.config.apiRateLimitRps | quote }}
+            - name: BRIGHTDATA_API_TIMEOUT_SECONDS
+              value: {{ .Values.config.apiTimeoutSeconds | quote }}
+            - name: BRIGHTDATA_ZONES_FILTER
+              value: {{ .Values.config.zonesFilter | quote }}
+            - name: BRIGHTDATA_INCLUDE_DISABLED
+              value: {{ .Values.config.includeDisabled | quote }}
+            # Optional collectors
+            - name: BRIGHTDATA_COLLECT_IP_ROSTERS
+              value: {{ .Values.config.collectIpRosters | quote }}
+            - name: BRIGHTDATA_COLLECT_RECENT_IPS
+              value: {{ .Values.config.collectRecentIps | quote }}
+            - name: BRIGHTDATA_COLLECT_IP_HEALTH
+              value: {{ .Values.config.collectIpHealth | quote }}
+            - name: BRIGHTDATA_COLLECT_NETWORK_STATUS
+              value: {{ .Values.config.collectNetworkStatus | quote }}
+            - name: BRIGHTDATA_COLLECT_DOMAIN_CONSUMPTION
+              value: {{ .Values.config.collectDomainConsumption | quote }}
+            # On-demand REST /api/* service
+            - name: BRIGHTDATA_API_ENABLED
+              value: {{ .Values.config.apiEnabled | quote }}
+            - name: BRIGHTDATA_CACHE_TTL_SECONDS
+              value: {{ .Values.config.cacheTtlSeconds | quote }}
+            - name: BRIGHTDATA_CACHE_MAX_SIZE
+              value: {{ .Values.config.cacheMaxSize | quote }}
+            - name: BRIGHTDATA_API_MIN_WINDOW_DAYS
+              value: {{ .Values.config.apiMinWindowDays | quote }}
+            # HTTP server
+            - name: BRIGHTDATA_LISTEN_HOST
+              value: "0.0.0.0"
+            - name: BRIGHTDATA_LISTEN_PORT
+              value: "9617"
+            - name: BRIGHTDATA_LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: BRIGHTDATA_LOG_FORMAT
+              value: {{ .Values.config.logFormat | quote }}
+          {{- with .Values.probes.liveness }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.probes.readiness }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

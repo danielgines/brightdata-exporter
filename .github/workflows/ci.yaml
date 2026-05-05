@@ -1,0 +1,150 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Python — lint + type-check + tests across supported versions
+  # ---------------------------------------------------------------------
+  lint-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.x"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync dev deps
+        run: uv sync --extra dev
+
+      - name: Ruff check
+        run: uv run ruff check src tests
+
+      - name: Ruff format check
+        run: uv run ruff format --check src tests
+
+      - name: Mypy strict
+        run: uv run mypy src
+
+      - name: Pytest
+        run: uv run pytest -v --cov=brightdata_exporter --cov-report=term-missing
+
+  # ---------------------------------------------------------------------
+  # Helm — chart validates + renders with all features on
+  # ---------------------------------------------------------------------
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.0
+      - name: Helm lint
+        run: helm lint helm/brightdata-exporter
+      - name: Helm template smoke (every feature flag on)
+        run: |
+          helm template t helm/brightdata-exporter \
+            --set auth.apiToken=fake \
+            --set auth.apiAuthToken=fake \
+            --set networkPolicy.enabled=true \
+            --set serviceMonitor.enabled=true \
+            > /tmp/render.yaml
+          # Pipe through kubectl --dry-run for stricter API-side validation.
+          # Don't fail on `kubectl missing`; this is a smoke check.
+          kubectl --dry-run=client apply -f /tmp/render.yaml || true
+
+  # ---------------------------------------------------------------------
+  # Trivy — filesystem scan: deps + Dockerfile + Helm + IaC
+  # ---------------------------------------------------------------------
+  trivy-fs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # SARIF upload to GitHub Security tab
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem scan (HIGH+CRITICAL, fixable)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy-fs.sarif
+          exit-code: "0"   # report-only; image scan is the gate
+          skip-dirs: .venv,.pytest_cache,.mypy_cache,htmlcov
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  # ---------------------------------------------------------------------
+  # Trivy — image scan: build container + scan, GATE on CRITICAL
+  # ---------------------------------------------------------------------
+  trivy-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: brightdata-exporter:ci
+          build-args: |
+            BRIGHTDATA_VERSION=ci
+            BRIGHTDATA_REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy image scan — GATE on CRITICAL
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: brightdata-exporter:ci
+          ignore-unfixed: true
+          severity: CRITICAL
+          format: sarif
+          output: trivy-image.sarif
+          exit-code: "1"   # FAIL the job on any unfixed CRITICAL
+      - name: Trivy image scan — also report HIGH (no gate)
+        if: always()
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: brightdata-exporter:ci
+          ignore-unfixed: true
+          severity: HIGH
+          format: sarif
+          output: trivy-image-high.sarif
+          exit-code: "0"
+      - name: Upload SARIF (CRITICAL)
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image-critical
+      - name: Upload SARIF (HIGH)
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image-high.sarif
+          category: trivy-image-high

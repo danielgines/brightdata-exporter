@@ -1,0 +1,121 @@
+# Minimal Kubernetes manifests — for users not on Helm.
+#
+# Deploys the brightdata-exporter image, which serves both:
+#   - GET /metrics       — Prometheus exporter (always on)
+#   - GET /api/account   — REST FinOps service (snapshot)
+#   - GET /api/zones     — REST FinOps service (picker-driven)
+# Both surfaces share the same TCP port (9617) and rate-limited
+# upstream client.
+#
+# Edit the Secret to put your real BRIGHTDATA_API_TOKEN, then:
+#   kubectl apply -f deployment.yaml
+#
+# For production, drop the inline Secret and source the token via
+# ExternalSecrets Operator from Vault / AWS Secrets Manager / Azure Key Vault.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: brightdata-exporter
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: brightdata-exporter
+  namespace: brightdata-exporter
+type: Opaque
+stringData:
+  BRIGHTDATA_API_TOKEN: "REPLACE-ME"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: brightdata-exporter
+  namespace: brightdata-exporter
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: brightdata-exporter
+  namespace: brightdata-exporter
+  labels:
+    app.kubernetes.io/name: brightdata-exporter
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: brightdata-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: brightdata-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9617"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: brightdata-exporter
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          image: ghcr.io/danielgines/brightdata-exporter:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 9617
+          envFrom:
+            - secretRef:
+                name: brightdata-exporter
+          env:
+            - name: BRIGHTDATA_LOG_FORMAT
+              value: "json"
+            - name: BRIGHTDATA_SCRAPE_INTERVAL
+              value: "300"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: brightdata-exporter
+  namespace: brightdata-exporter
+  labels:
+    app.kubernetes.io/name: brightdata-exporter
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9617
+      targetPort: http
+      name: http
+  selector:
+    app.kubernetes.io/name: brightdata-exporter

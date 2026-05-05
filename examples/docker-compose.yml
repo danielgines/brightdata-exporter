@@ -1,0 +1,77 @@
+# Local stack for trying out brightdata-exporter end-to-end.
+#
+# Usage:
+#   cd examples
+#   BRIGHTDATA_API_TOKEN=your-token docker compose up
+#
+# To exercise the bearer-auth gate on /api/* (recommended for any
+# real deployment), additionally set BRIGHTDATA_API_AUTH_TOKEN — both
+# the exporter (server side) and Grafana's Infinity datasource
+# (client side) pick it up automatically:
+#   BRIGHTDATA_API_TOKEN=... BRIGHTDATA_API_AUTH_TOKEN=$(openssl rand -hex 32) docker compose up
+#
+# Then open:
+#   - http://localhost:9617/metrics      (raw exporter)
+#   - http://localhost:9090              (Prometheus UI)
+#   - http://localhost:3000              (Grafana, admin/admin, dashboard auto-loaded)
+
+services:
+  brightdata-exporter:
+    image: ghcr.io/danielgines/brightdata-exporter:latest
+    # Or build from source:
+    # build:
+    #   context: ..
+    #   dockerfile: Dockerfile
+    environment:
+      BRIGHTDATA_API_TOKEN: ${BRIGHTDATA_API_TOKEN:?set BRIGHTDATA_API_TOKEN in your shell}
+      # Optional bearer auth on /api/*. Empty default keeps the example
+      # back-compatible; set to a real token in production.
+      BRIGHTDATA_API_AUTH_TOKEN: ${BRIGHTDATA_API_AUTH_TOKEN:-}
+      BRIGHTDATA_LOG_FORMAT: console
+      BRIGHTDATA_SCRAPE_INTERVAL: "120"
+      BRIGHTDATA_PERIOD_DAYS: "30"
+    ports:
+      - "9617:9617"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9617/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--query.lookback-delta=10m"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      brightdata-exporter:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # Infinity datasource — consumed by the Zones table panel to call
+      # the brightdata-exporter /api/* REST endpoints with the dashboard
+      # time picker driving the from/to range.
+      GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource"
+      # Forwarded so the datasource provisioning YAML can expand
+      # `$BRIGHTDATA_API_AUTH_TOKEN` into the bearer header. Empty value
+      # = no header (matches exporter's open default).
+      BRIGHTDATA_API_AUTH_TOKEN: ${BRIGHTDATA_API_AUTH_TOKEN:-}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana-provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana-provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana-dashboard.json:/var/lib/grafana/dashboards/brightdata-finops.json:ro
+      - ./grafana-dashboard-operations.json:/var/lib/grafana/dashboards/brightdata-operations.json:ro
+    depends_on:
+      - prometheus

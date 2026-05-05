@@ -1,0 +1,35 @@
+{{ .Chart.Name }} {{ .Chart.AppVersion }} installed.
+
+The exporter is now collecting metrics from the Bright Data API.
+
+  • Metrics endpoint:
+      kubectl --namespace {{ .Release.Namespace }} port-forward \
+        svc/{{ include "brightdata-exporter.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+      curl http://localhost:{{ .Values.service.port }}/metrics
+
+  • Health:
+      curl http://localhost:{{ .Values.service.port }}/healthz
+      curl http://localhost:{{ .Values.service.port }}/readyz
+
+{{- if .Values.serviceMonitor.enabled }}
+
+  • ServiceMonitor: enabled — Prometheus Operator should pick the exporter
+    up automatically (interval={{ .Values.serviceMonitor.interval }}).
+{{- else }}
+
+  • ServiceMonitor: disabled. Either:
+      - Enable it: --set serviceMonitor.enabled=true (requires prometheus-operator)
+      - Or have your Prometheus scrape the legacy `prometheus.io/*` pod
+        annotations the chart emits by default.
+{{- end }}
+
+{{- if not (or .Values.auth.existingSecret .Values.auth.apiToken) }}
+
+  ⚠️  No API token configured. Set ONE of:
+        --set auth.apiToken=YOUR-TOKEN          (test only — never commit)
+        --set auth.existingSecret=name-of-secret (recommended; pair with ESO)
+
+  Until then, the exporter will crashloop.
+{{- end }}
+
+Configuration reference: https://github.com/danielgines/brightdata-exporter

@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# uv / venv
+.venv/
+venv/
+.python-version
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# secrets — never commit a real token
+.env
+.env.local
+*.token
+secrets.local.*
+
+# Helm
+helm/*/charts/
+helm/*/Chart.lock
+*.tgz
+
+# Local test artifacts
+prometheus.yml.local
+docker-compose.override.yaml

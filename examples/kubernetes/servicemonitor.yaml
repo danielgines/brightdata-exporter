@@ -1,0 +1,19 @@
+# Optional — apply this on top of deployment.yaml when you run
+# prometheus-operator and want it to discover the exporter automatically.
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: brightdata-exporter
+  namespace: brightdata-exporter
+  labels:
+    app.kubernetes.io/name: brightdata-exporter
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: brightdata-exporter
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 60s
+      scrapeTimeout: 30s

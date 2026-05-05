@@ -1,0 +1,386 @@
+{
+  "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
+  "description": "Bright Data — FinOps investigation. Account snapshot + per-zone cost/traffic/requests + cost breakdown for the time range picked. 100% driven by the dashboard time picker via /api/* on brightdata-exporter. For continuous time-series monitoring, see the 'Bright Data — Operations' dashboard.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": false, "tags": ["brightdata", "operations"], "targetBlank": true, "title": "Operations dashboard", "tooltip": "Continuous time-series monitoring (Prometheus-driven)", "type": "dashboards"},
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": false, "tags": [], "targetBlank": true, "title": "brightdata-exporter on GitHub", "tooltip": "", "type": "link", "url": "https://github.com/danielgines/brightdata-exporter"}
+  ],
+  "liveNow": false,
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["brightdata", "finops"],
+  "templating": {"list": []},
+  "time": {"from": "now-30d", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "Bright Data — Account & Zones",
+  "uid": "brightdata-overview",
+  "version": 1,
+  "weekStart": "",
+  "panels": [
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "id": 100, "panels": [], "title": "Account (snapshot)", "type": "row"},
+    {
+      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+      "description": "Available prepayment balance from Bright Data /customer/balance. Snapshot — not affected by the time picker.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 100}, {"color": "green", "value": 500}]}, "unit": "currencyUSD"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 5, "x": 0, "y": 1},
+      "id": 101,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "url": "/api/account",
+          "url_options": {"method": "GET", "params": []},
+          "parser": "backend",
+          "root_selector": "",
+          "columns": [
+            {"text": "PrePayment", "selector": "balance.prepayment_usd", "type": "number"}
+          ]
+        }
+      ],
+      "title": "PrePayment",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+      "description": "Account credit (non-prepayment funds) from /customer/balance. Snapshot.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}, "unit": "currencyUSD"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 5, "x": 5, "y": 1},
+      "id": 102,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "url": "/api/account",
+          "url_options": {"method": "GET", "params": []},
+          "parser": "backend",
+          "root_selector": "",
+          "columns": [
+            {"text": "Credit", "selector": "balance.credit_usd", "type": "number"}
+          ]
+        }
+      ],
+      "title": "Credit",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+      "description": "Current cash balance (prepayment minus this-month consumption) from /customer/balance. Snapshot.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 50}, {"color": "green", "value": 200}]}, "unit": "currencyUSD"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 5, "x": 10, "y": 1},
+      "id": 103,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "url": "/api/account",
+          "url_options": {"method": "GET", "params": []},
+          "parser": "backend",
+          "root_selector": "",
+          "columns": [
+            {"text": "Balance", "selector": "balance.balance_usd", "type": "number"}
+          ]
+        }
+      ],
+      "title": "Balance",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+      "description": "Spent month-to-date from /customer/balance. Snapshot — Bright Data resets this counter each calendar month, regardless of the dashboard time picker.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 200}, {"color": "red", "value": 500}]}, "unit": "currencyUSD"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 5, "x": 15, "y": 1},
+      "id": 104,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "url": "/api/account",
+          "url_options": {"method": "GET", "params": []},
+          "parser": "backend",
+          "root_selector": "",
+          "columns": [
+            {"text": "Spent this month", "selector": "balance.spent_this_month_usd", "type": "number"}
+          ]
+        }
+      ],
+      "title": "Spent this month",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+      "description": "Active zones reported by /zone/get_all_zones. Snapshot.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}, "unit": "none"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+      "id": 105,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "url": "/api/account",
+          "url_options": {"method": "GET", "params": []},
+          "parser": "backend",
+          "root_selector": "",
+          "columns": [
+            {"text": "Active Zones", "selector": "zones.active", "type": "number"}
+          ]
+        }
+      ],
+      "title": "Active Zones",
+      "type": "stat"
+    },
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}, "id": 200, "panels": [], "title": "Zones (range)", "type": "row"},
+    {
+      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+      "description": "Per-zone summary driven by the dashboard time picker. Calls /api/zones?from=&to= on the brightdata-exporter; range comes from the picker. Sortable, with footer aggregates on numeric columns.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "thresholds"}, "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": true, "inspect": false}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "transparent", "value": null}]}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Spent"}, "properties": [{"id": "unit", "value": "currencyUSD"}, {"id": "custom.cellOptions", "value": {"mode": "gradient", "type": "color-background"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 50}, {"color": "red", "value": 200}]}}]},
+          {"matcher": {"id": "byName", "options": "Cost"}, "properties": [{"id": "custom.cellOptions", "value": {"mode": "basic", "type": "auto"}}]},
+          {"matcher": {"id": "byName", "options": "Spend Limit"}, "properties": [{"id": "unit", "value": "currencyUSD"}, {"id": "noValue", "value": "No limit"}]},
+          {"matcher": {"id": "byName", "options": "Traffic (GB)"}, "properties": [{"id": "unit", "value": "decgbytes"}, {"id": "decimals", "value": 3}]},
+          {"matcher": {"id": "byName", "options": "Requests"}, "properties": [{"id": "unit", "value": "short"}]},
+          {"matcher": {"id": "byName", "options": "Status"}, "properties": [{"id": "mappings", "value": [{"options": {"active": {"color": "green", "index": 0, "text": "Active"}, "disabled": {"color": "orange", "index": 1, "text": "Disabled"}, "deleted": {"color": "red", "index": 2, "text": "Deleted"}}, "type": "value"}]}, {"id": "custom.cellOptions", "value": {"mode": "basic", "type": "color-background-solid"}}]}
+        ]
+      },
+      "gridPos": {"h": 14, "w": 24, "x": 0, "y": 6},
+      "id": 201,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": ["Spent", "Traffic (GB)", "Requests"], "reducer": ["sum"], "show": true},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "Spent"}]
+      },
+      "targets": [
+        {
+          "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "url": "/api/zones",
+          "url_options": {
+            "method": "GET",
+            "data": "",
+            "params": [
+              {"key": "from", "value": "${__from:date:YYYY-MM-DD}"},
+              {"key": "to", "value": "${__to:date:YYYY-MM-DD}"}
+            ]
+          },
+          "parser": "backend",
+          "root_selector": "",
+          "columns": [
+            {"text": "Name", "selector": "name", "type": "string"},
+            {"text": "Type", "selector": "type", "type": "string"},
+            {"text": "Pool Type", "selector": "pool_tier", "type": "string"},
+            {"text": "Cost", "selector": "rate_display", "type": "string"},
+            {"text": "Spend Limit", "selector": "usage_limit.value", "type": "number"},
+            {"text": "Traffic (GB)", "selector": "traffic_gb", "type": "number"},
+            {"text": "Requests", "selector": "requests.total", "type": "number"},
+            {"text": "Spent", "selector": "cost_usd", "type": "number"},
+            {"text": "Status", "selector": "status", "type": "string"}
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "includeByName": {},
+            "indexByName": {
+              "Name": 0,
+              "Type": 1,
+              "Pool Type": 2,
+              "Requests": 3,
+              "Traffic (GB)": 4,
+              "Status": 5,
+              "Cost": 6,
+              "Spend Limit": 7,
+              "Spent": 8
+            },
+            "renameByName": {}
+          }
+        }
+      ],
+      "title": "Zones",
+      "type": "table"
+    },
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 20}, "id": 300, "panels": [], "title": "Cost breakdown (range)", "type": "row"},
+    {
+      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+      "description": "Top 10 zones by spend in the picked range. Aggregate, not time-series — the bar height is total $ spent over the whole window.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "custom": {"axisPlacement": "auto", "fillOpacity": 80, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineWidth": 1, "scaleDistribution": {"type": "linear"}, "thresholdsStyle": {"mode": "off"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 100}, {"color": "red", "value": 500}]}, "unit": "currencyUSD"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 21},
+      "id": 301,
+      "options": {"barRadius": 0, "barWidth": 0.85, "fullHighlight": false, "groupWidth": 0.7, "legend": {"calcs": [], "displayMode": "hidden", "placement": "bottom", "showLegend": false}, "orientation": "horizontal", "showValue": "auto", "stacking": "none", "tooltip": {"mode": "single", "sort": "none"}, "xField": "Name", "xTickLabelRotation": 0, "xTickLabelSpacing": 0},
+      "targets": [
+        {
+          "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "url": "/api/zones",
+          "url_options": {
+            "method": "GET",
+            "params": [
+              {"key": "from", "value": "${__from:date:YYYY-MM-DD}"},
+              {"key": "to", "value": "${__to:date:YYYY-MM-DD}"}
+            ]
+          },
+          "parser": "backend",
+          "root_selector": "",
+          "columns": [
+            {"text": "Name", "selector": "name", "type": "string"},
+            {"text": "Spent", "selector": "cost_usd", "type": "number"}
+          ]
+        }
+      ],
+      "transformations": [
+        {"id": "filterByValue", "options": {"filters": [{"config": {"id": "greater", "options": {"value": 0}}, "fieldName": "Spent"}], "match": "any", "type": "include"}},
+        {"id": "sortBy", "options": {"fields": {}, "sort": [{"desc": true, "field": "Spent"}]}},
+        {"id": "limit", "options": {"limitField": 10}}
+      ],
+      "title": "Top 10 zones by spend (range)",
+      "type": "barchart"
+    },
+    {
+      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+      "description": "Top 10 zones by traffic volume in the picked range. Per-zone GB consumed.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "custom": {"axisPlacement": "auto", "fillOpacity": 80, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineWidth": 1, "scaleDistribution": {"type": "linear"}, "thresholdsStyle": {"mode": "off"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}, "unit": "decgbytes"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 21},
+      "id": 302,
+      "options": {"barRadius": 0, "barWidth": 0.85, "fullHighlight": false, "groupWidth": 0.7, "legend": {"calcs": [], "displayMode": "hidden", "placement": "bottom", "showLegend": false}, "orientation": "horizontal", "showValue": "auto", "stacking": "none", "tooltip": {"mode": "single", "sort": "none"}, "xField": "Name", "xTickLabelRotation": 0, "xTickLabelSpacing": 0},
+      "targets": [
+        {
+          "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "url": "/api/zones",
+          "url_options": {
+            "method": "GET",
+            "params": [
+              {"key": "from", "value": "${__from:date:YYYY-MM-DD}"},
+              {"key": "to", "value": "${__to:date:YYYY-MM-DD}"}
+            ]
+          },
+          "parser": "backend",
+          "root_selector": "",
+          "columns": [
+            {"text": "Name", "selector": "name", "type": "string"},
+            {"text": "Traffic (GB)", "selector": "traffic_gb", "type": "number"}
+          ]
+        }
+      ],
+      "transformations": [
+        {"id": "filterByValue", "options": {"filters": [{"config": {"id": "greater", "options": {"value": 0}}, "fieldName": "Traffic (GB)"}], "match": "any", "type": "include"}},
+        {"id": "sortBy", "options": {"fields": {}, "sort": [{"desc": true, "field": "Traffic (GB)"}]}},
+        {"id": "limit", "options": {"limitField": 10}}
+      ],
+      "title": "Top 10 zones by traffic (range)",
+      "type": "barchart"
+    },
+    {
+      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+      "description": "Spend grouped by Pool Type (dedicated vs shared). Lets you see what mix of zone tiers is driving cost.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"hideFrom": {"legend": false, "tooltip": false, "viz": false}}, "mappings": [], "unit": "currencyUSD"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 30},
+      "id": 303,
+      "options": {"displayLabels": ["name", "percent"], "legend": {"displayMode": "list", "placement": "right", "showLegend": true, "values": ["value"]}, "pieType": "donut", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {
+          "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "url": "/api/zones",
+          "url_options": {
+            "method": "GET",
+            "params": [
+              {"key": "from", "value": "${__from:date:YYYY-MM-DD}"},
+              {"key": "to", "value": "${__to:date:YYYY-MM-DD}"}
+            ]
+          },
+          "parser": "backend",
+          "root_selector": "",
+          "columns": [
+            {"text": "Pool Type", "selector": "pool_tier", "type": "string"},
+            {"text": "Spent", "selector": "cost_usd", "type": "number"}
+          ]
+        }
+      ],
+      "transformations": [
+        {"id": "groupBy", "options": {"fields": {"Pool Type": {"aggregations": [], "operation": "groupby"}, "Spent": {"aggregations": ["sum"], "operation": "aggregate"}}}},
+        {"id": "rowsToFields", "options": {"mappings": [{"fieldName": "Pool Type", "handlerKey": "field.name"}, {"fieldName": "Spent (sum)", "handlerKey": "field.value"}]}}
+      ],
+      "title": "Spend by Pool Type (range)",
+      "type": "piechart"
+    },
+    {
+      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+      "description": "Spend grouped by zone Type (Residential, Data Center, SERP API, Mobile). Helps spot which proxy product is the budget driver.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"hideFrom": {"legend": false, "tooltip": false, "viz": false}}, "mappings": [], "unit": "currencyUSD"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 30},
+      "id": 304,
+      "options": {"displayLabels": ["name", "percent"], "legend": {"displayMode": "list", "placement": "right", "showLegend": true, "values": ["value"]}, "pieType": "donut", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {
+          "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "brightdata-api"},
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "url": "/api/zones",
+          "url_options": {
+            "method": "GET",
+            "params": [
+              {"key": "from", "value": "${__from:date:YYYY-MM-DD}"},
+              {"key": "to", "value": "${__to:date:YYYY-MM-DD}"}
+            ]
+          },
+          "parser": "backend",
+          "root_selector": "",
+          "columns": [
+            {"text": "Type", "selector": "type", "type": "string"},
+            {"text": "Spent", "selector": "cost_usd", "type": "number"}
+          ]
+        }
+      ],
+      "transformations": [
+        {"id": "groupBy", "options": {"fields": {"Type": {"aggregations": [], "operation": "groupby"}, "Spent": {"aggregations": ["sum"], "operation": "aggregate"}}}},
+        {"id": "rowsToFields", "options": {"mappings": [{"fieldName": "Type", "handlerKey": "field.name"}, {"fieldName": "Spent (sum)", "handlerKey": "field.value"}]}}
+      ],
+      "title": "Spend by zone Type (range)",
+      "type": "piechart"
+    }
+  ]
+}

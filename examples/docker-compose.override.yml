@@ -1,0 +1,18 @@
+# Local override — use the locally-built image instead of pulling from GHCR
+# and give Grafana a writable named volume for its SQLite DB. Auto-loaded
+# by `docker compose` alongside docker-compose.yml. This file is gitignored
+# (matches `docker-compose.override.yaml` in .gitignore).
+services:
+  brightdata-exporter:
+    image: brightdata-exporter:dev
+    pull_policy: never
+  grafana:
+    # Run as root so the new named volume gets initialized writable. This
+    # is fine for the local-dev compose stack — production images aren't
+    # affected by this override.
+    user: "0"
+    volumes:
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  grafana-data: {}

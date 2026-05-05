@@ -1,0 +1,34 @@
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+
+  # Infinity datasource — consumes the brightdata-exporter REST endpoints
+  # ( /api/zones?from=&to=, /api/account, etc ). The dashboard's Zones
+  # table queries through this so the Grafana time picker drives the
+  # actual upstream from/to range, not just which Prometheus sample to
+  # display. See README "FinOps service" section for the full story.
+  #
+  # Bearer auth: the `httpHeaderName1` + `httpHeaderValue1` pair below
+  # injects `Authorization: Bearer <token>` into every /api/* request.
+  # Grafana expands `$BRIGHTDATA_API_AUTH_TOKEN` from the container env
+  # at provisioning time. When the env var is empty (default), the
+  # value becomes literal "Bearer " which the exporter rejects with 401
+  # *only* if its own BRIGHTDATA_API_AUTH_TOKEN is set — when both are
+  # empty the gate is off on the server side and Grafana's malformed
+  # header is ignored, so the example still works end-to-end without
+  # any tokens.
+  - name: BrightDataAPI
+    uid: brightdata-api
+    type: yesoreyeram-infinity-datasource
+    access: proxy
+    url: http://brightdata-exporter:9617
+    jsonData:
+      global_queries: []
+      httpHeaderName1: "Authorization"
+    secureJsonData:
+      httpHeaderValue1: "Bearer $BRIGHTDATA_API_AUTH_TOKEN"
