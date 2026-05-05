@@ -15,8 +15,8 @@ description: |
   investigation dashboard (Infinity, picker-driven) and an Operations
   dashboard (Prometheus, continuous monitoring).
 type: application
-version: 0.2.9
-appVersion: "0.2.9"
+version: 0.2.10
+appVersion: "0.2.10"
 keywords:
   - brightdata
   - prometheus
