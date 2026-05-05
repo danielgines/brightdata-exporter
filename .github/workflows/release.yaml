@@ -1,58 +1,158 @@
 name: release
 
+# Three trigger paths into a single workflow — no PAT required.
+# All work happens inside one workflow run, so GITHUB_TOKEN is sufficient
+# for everything (image push, helm push, cosign signing, git tag creation,
+# GitHub Release publication). The "GITHUB_TOKEN-pushed events don't
+# trigger other workflows" limitation does not apply when there's no
+# second workflow to trigger.
 on:
+  # PRIMARY path: chore(release): vX.Y.Z commit lands on main → ci runs
+  # → on success, this workflow fires and detects the release subject,
+  # builds + publishes everything, then creates the git tag at the end.
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+  # MANUAL path: re-release a specific version (e.g. retry after a
+  # transient registry outage, or release an older tag from history).
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (without 'v' prefix), e.g. 0.2.8"
+        required: true
+        type: string
+
+  # TAG-PUSH path: someone uses GitHub UI's 'Draft a new release' (which
+  # creates the tag for them) or `git push origin v0.2.8` directly.
   push:
     tags: ["v*"]
 
 permissions:
-  contents: write     # GitHub Release creation
+  contents: write     # GitHub Release creation + git tag push
   packages: write     # GHCR push (image + Helm OCI chart)
   id-token: write     # Cosign keyless signing via GitHub OIDC
   attestations: write # Provenance attestations attached to image
 
 jobs:
   # ---------------------------------------------------------------------
-  # Pre-flight — version metadata in pyproject.toml + Chart.yaml MUST
-  # match the git tag we're releasing. Catching drift here is cheaper
-  # than discovering it post-publish.
+  # Resolve which version to release + whether to run at all.
+  # All three trigger paths funnel through here so downstream jobs only
+  # see ``needs.resolve.outputs.{version, tag, ref, should_run}``.
+  # ---------------------------------------------------------------------
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.detect.outputs.version }}
+      tag: ${{ steps.detect.outputs.tag }}
+      ref: ${{ steps.detect.outputs.ref }}
+      should_run: ${{ steps.detect.outputs.should_run }}
+    steps:
+      - name: Detect trigger + extract version
+        id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          WF_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WF_HEAD_MSG: ${{ github.event.workflow_run.head_commit.message }}
+          WF_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            workflow_run)
+              # Only run when CI succeeded on the same head commit.
+              if [ "$WF_CONCLUSION" != "success" ]; then
+                echo "::notice::ci workflow conclusion was '$WF_CONCLUSION' — skipping"
+                echo "should_run=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              SUBJECT=$(printf '%s\n' "$WF_HEAD_MSG" | head -1)
+              # Match `chore(release): v0.2.8` direct push and the
+              # `chore(release): v0.2.8 (#42)` squash-merge variant.
+              if [[ "$SUBJECT" =~ ^chore\(release\):[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]+\(#[0-9]+\))?$ ]]; then
+                VERSION="${BASH_REMATCH[1]}"
+                echo "::notice::detected release commit $SUBJECT"
+                echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+                echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+                echo "ref=$WF_HEAD_SHA" >> "$GITHUB_OUTPUT"
+                echo "should_run=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "::notice::head commit subject is not chore(release): vX.Y.Z — skipping"
+                echo "should_run=false" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+            workflow_dispatch)
+              if [[ ! "$DISPATCH_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "::error::version input must be X.Y.Z (got '$DISPATCH_VERSION')"
+                exit 1
+              fi
+              echo "version=$DISPATCH_VERSION" >> "$GITHUB_OUTPUT"
+              echo "tag=v$DISPATCH_VERSION" >> "$GITHUB_OUTPUT"
+              echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+              echo "should_run=true" >> "$GITHUB_OUTPUT"
+              ;;
+            push)
+              # Tag-push path. ${GITHUB_REF_NAME} is the tag like 'v0.2.8'.
+              TAG="$GITHUB_REF_NAME"
+              VERSION="${TAG#v}"
+              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+              echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+              echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+              echo "should_run=true" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+  # ---------------------------------------------------------------------
+  # Pre-flight version sources alignment — defense-in-depth on top of
+  # local pre-commit hook + scripts/sync-version.py. If pyproject /
+  # __init__.py / Chart.yaml don't all match, refuse to publish.
   # ---------------------------------------------------------------------
   version-gate:
     runs-on: ubuntu-latest
+    needs: [resolve]
+    if: needs.resolve.outputs.should_run == 'true'
     steps:
       - uses: actions/checkout@v4
-      - name: Validate pyproject + Chart.yaml match the tag
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+      - name: Validate version sources match the resolved version
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME#v}"
           PYPROJECT=$(grep '^version' pyproject.toml | head -1 | cut -d'"' -f2)
+          INIT_PY=$(grep '__version__' src/brightdata_exporter/__init__.py | cut -d'"' -f2)
           CHART_VERSION=$(grep '^version:' helm/brightdata-exporter/Chart.yaml | awk '{print $2}')
           CHART_APP=$(grep '^appVersion:' helm/brightdata-exporter/Chart.yaml | awk '{print $2}' | tr -d '"')
-          INIT_PY=$(grep '__version__' src/brightdata_exporter/__init__.py | cut -d'"' -f2)
-          echo "tag:           v${TAG}"
-          echo "pyproject:     v${PYPROJECT}"
-          echo "Chart version: v${CHART_VERSION}"
-          echo "Chart appVer:  v${CHART_APP}"
-          echo "__init__.py:   v${INIT_PY}"
+          echo "target version: $VERSION"
+          echo "pyproject:      $PYPROJECT"
+          echo "__init__.py:    $INIT_PY"
+          echo "Chart version:  $CHART_VERSION"
+          echo "Chart appVer:   $CHART_APP"
           fail=0
-          for v in "$PYPROJECT" "$CHART_VERSION" "$CHART_APP" "$INIT_PY"; do
-            if [ "$v" != "$TAG" ]; then
-              echo "::error::version drift — '$v' != tag '$TAG'"
+          for v in "$PYPROJECT" "$INIT_PY" "$CHART_VERSION" "$CHART_APP"; do
+            if [ "$v" != "$VERSION" ]; then
+              echo "::error::version drift — '$v' != '$VERSION'"
               fail=1
             fi
           done
           [ "$fail" = "0" ]
 
   # ---------------------------------------------------------------------
-  # Container image — build, push, sign with Cosign keyless, attest
-  # provenance + SBOM via Buildx, post-publish Trivy gate.
+  # Container image — multi-arch build + push, attestations, post-push
+  # Trivy gate, Cosign keyless signing.
   # ---------------------------------------------------------------------
   ghcr:
     runs-on: ubuntu-latest
-    needs: [version-gate]
+    needs: [resolve, version-gate]
+    if: needs.resolve.outputs.should_run == 'true'
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
@@ -69,18 +169,16 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/brightdata-exporter
           tags: |
-            type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ needs.resolve.outputs.version }}
             type=raw,value=latest
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.resolve.outputs.tag }}
 
       - name: Build + push (multi-arch + SBOM + provenance, no cache)
         id: build
-        # `no-cache: true` mirrors the CI trivy-image rationale: forces the
-        # runtime stage's `apt-get upgrade` to run so the released image
-        # carries fresh Debian patches. Releases are infrequent enough
-        # that the extra build time (~5-10 min for multi-arch) is worth
-        # not shipping CVEs masked by stale GHA-cache layers.
+        # `no-cache: true` forces apt-get upgrade in the runtime stage
+        # to actually run, so the released image carries fresh Debian
+        # security patches rather than serving a stale GHA cache layer.
+        # Cost: ~5-10min per release; benefit: no phantom CVEs.
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -89,15 +187,11 @@ jobs:
           no-cache: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Buildx attestations: SBOM (SPDX) + SLSA provenance.
-          # `mode=max` records all build steps in the provenance attestation.
           provenance: mode=max
           sbom: true
-          # Populate OCI labels declared in Dockerfile so registry browsers
-          # show the right version + commit at-a-glance.
           build-args: |
-            BRIGHTDATA_VERSION=${{ github.ref_name }}
-            BRIGHTDATA_REVISION=${{ github.sha }}
+            BRIGHTDATA_VERSION=${{ needs.resolve.outputs.tag }}
+            BRIGHTDATA_REVISION=${{ needs.resolve.outputs.ref }}
 
       - name: Trivy scan published image — gate on CRITICAL
         uses: aquasecurity/trivy-action@v0.36.0
@@ -116,28 +210,26 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "true"
         run: |
-          # Sign by digest (not by tag) — tags are mutable, digests are not.
-          # Cosign's keyless mode pulls a Sigstore certificate via GitHub
-          # OIDC and posts the signature to the public Rekor transparency
-          # log; verifiers later check the cert's Subject claim against
-          # the workflow identity.
           IMAGE="ghcr.io/${{ github.repository_owner }}/brightdata-exporter"
           DIGEST="${{ steps.build.outputs.digest }}"
           cosign sign --yes "${IMAGE}@${DIGEST}"
+          echo
           echo "Verify locally with:"
           echo "  cosign verify ${IMAGE}@${DIGEST} \\"
           echo "    --certificate-identity-regexp 'https://github\\.com/${{ github.repository }}/.*' \\"
           echo "    --certificate-oidc-issuer https://token.actions.githubusercontent.com"
 
   # ---------------------------------------------------------------------
-  # Helm chart — package + push as OCI artifact to GHCR, alongside the
-  # image. One registry, two artifact types, single auth path.
+  # Helm chart — package + push as OCI artifact to GHCR.
   # ---------------------------------------------------------------------
   helm-chart:
     runs-on: ubuntu-latest
-    needs: [version-gate, ghcr]
+    needs: [resolve, version-gate, ghcr]
+    if: needs.resolve.outputs.should_run == 'true'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
       - uses: azure/setup-helm@v4
         with:
           version: v3.15.0
@@ -150,27 +242,76 @@ jobs:
               --password-stdin
 
       - name: Package + push chart
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p /tmp/chart-out
           helm package helm/brightdata-exporter -d /tmp/chart-out
           helm push \
             "/tmp/chart-out/brightdata-exporter-${VERSION}.tgz" \
             "oci://ghcr.io/${{ github.repository_owner }}/charts"
+          echo
           echo "Install with:"
           echo "  helm install bd oci://ghcr.io/${{ github.repository_owner }}/charts/brightdata-exporter \\"
           echo "    --version ${VERSION} \\"
           echo "    --set auth.existingSecret=brightdata-credentials"
 
   # ---------------------------------------------------------------------
-  # GitHub Release page — auto-generated from commits since previous tag.
+  # Git tag — create + push only when the trigger didn't already provide
+  # a tag (workflow_run + workflow_dispatch paths). For tag-push triggers
+  # the tag already exists; this job is a no-op.
+  # GITHUB_TOKEN can push tags (it just won't trigger another workflow,
+  # which we don't need since everything is in this one workflow).
+  # ---------------------------------------------------------------------
+  tag:
+    runs-on: ubuntu-latest
+    needs: [resolve, ghcr, helm-chart]
+    if: needs.resolve.outputs.should_run == 'true' && github.event_name != 'push'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create + push annotated tag
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::notice::tag $TAG already exists — skipping creation"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          echo "::notice::pushed tag $TAG"
+
+  # ---------------------------------------------------------------------
+  # GitHub Release — auto-generated notes from commits since the
+  # previous tag. Runs after tag exists (either via tag-push trigger or
+  # via the tag job above).
   # ---------------------------------------------------------------------
   github-release:
     runs-on: ubuntu-latest
-    needs: [ghcr, helm-chart]
+    needs: [resolve, ghcr, helm-chart, tag]
+    # `tag` job is skipped on tag-push triggers; using `always() && needs.tag.result != 'failure'`
+    # so this still runs after tag-push (which has tag.result == 'skipped').
+    if: |
+      always() &&
+      needs.resolve.outputs.should_run == 'true' &&
+      needs.ghcr.result == 'success' &&
+      needs.helm-chart.result == 'success' &&
+      (needs.tag.result == 'success' || needs.tag.result == 'skipped')
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          fetch-depth: 0
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          name: ${{ needs.resolve.outputs.tag }}
           generate_release_notes: true

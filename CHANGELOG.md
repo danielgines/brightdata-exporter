@@ -4,6 +4,44 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.9] — 2026-05-05
+
+### Removed — `auto-tag.yaml` and the `RELEASE_PAT` requirement
+
+The previous design split tag creation (auto-tag.yaml) from the release
+pipeline (release.yaml) so that pushing a `chore(release): vX.Y.Z`
+commit would auto-tag the repo and trigger the release. This required a
+`RELEASE_PAT` secret because GitHub forbids `GITHUB_TOKEN`-pushed tags
+from triggering other workflows (anti-recursion).
+
+Collapsed both into a single `release.yaml` with three triggers
+(`workflow_run` on ci success, `workflow_dispatch` for manual
+re-release, `push: tags ["v*"]` for manual tag push). Everything now
+happens inside one workflow run, so `GITHUB_TOKEN` is sufficient — the
+anti-recursion limitation only matters when you need a *second*
+workflow to fire.
+
+### Operator impact
+
+- `RELEASE_PAT` no longer needed. Setting it does no harm.
+- The `chore(release): vX.Y.Z` → push → ci → release flow is unchanged
+  from the operator's perspective.
+- New manual path: `gh workflow run release.yaml -f version=0.2.9` to
+  re-release a specific version (e.g. retry after a transient registry
+  outage).
+
+### Implementation
+
+- New `resolve` job at the top funnels all three trigger paths to a
+  common `(version, tag, ref, should_run)` output set; downstream
+  jobs only see those.
+- New `tag` job creates and pushes the `vX.Y.Z` annotated tag at the
+  END of the release (after artifacts succeed) — this means a partial
+  failure leaves no tag, so retries are clean.
+- Tag job is skipped on `push: tags` triggers (tag already exists);
+  the `github-release` job's `if:` accepts both 'success' and
+  'skipped' states for it.
+
 ## [0.2.8] — 2026-05-05
 
 ### Added — single-source-of-truth version sync

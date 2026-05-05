@@ -475,22 +475,28 @@ The flow is one command + push:
    - Stages all four files + `CHANGELOG.md`
    - Creates the commit `chore(release): vX.Y.Z`
 3. `git push origin main`
-4. CI runs → on success, `auto-tag.yaml` validates that the four
-   version sources still align with the subject (defense-in-depth) and
-   pushes the `vX.Y.Z` tag
-5. The tag push fires `release.yaml` which:
+4. CI runs → on success, `release.yaml` fires via `workflow_run`,
+   detects the `chore(release):` subject, validates the four version
+   sources still align (defense-in-depth), and runs the full release
+   pipeline:
    - Builds linux/amd64 + linux/arm64 image with SBOM + provenance attestations
    - Pushes to `ghcr.io/<owner>/brightdata-exporter:X.Y.Z` (+ semver + `latest`)
    - Trivy-scans the published image, **fails on any unfixed CRITICAL CVE**
    - **Cosign keyless signs** the image by digest via GitHub OIDC
    - Packages and pushes the Helm chart to `oci://ghcr.io/<owner>/charts/brightdata-exporter`
+   - Creates the `vX.Y.Z` git tag (after artifacts succeed)
    - Creates a GitHub Release with auto-generated notes
 
-**Setup requirement** (one-time): the auto-tag workflow needs a fine-grained
-PAT in the `RELEASE_PAT` repository secret with `Contents: Read and write`
-on this repo. Without it the tag is created but the release workflow
-won't fire (GitHub blocks `GITHUB_TOKEN`-pushed tags from triggering
-other workflows to prevent recursion).
+**No PAT required.** Everything happens inside one workflow run, so
+`GITHUB_TOKEN` is sufficient (the "GITHUB_TOKEN-pushed events don't
+trigger other workflows" limitation only matters when you need a
+*second* workflow to fire). The release workflow accepts three triggers:
+
+- `workflow_run` from `ci` succeeding on main (the primary path above)
+- `workflow_dispatch` with a `version` input (manual re-release path,
+  e.g. retry after a transient failure)
+- `push: tags ["v*"]` (someone using GitHub UI's "Draft a new release"
+  which creates a tag, or `git push origin v0.2.8` directly)
 
 **Verifying signed images:**
 
