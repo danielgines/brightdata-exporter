@@ -15,8 +15,8 @@ description: |
   investigation dashboard (Infinity, picker-driven) and an Operations
   dashboard (Prometheus, continuous monitoring).
 type: application
-version: 0.2.15
-appVersion: "0.2.15"
+version: 0.2.16
+appVersion: "0.2.16"
 keywords:
   - brightdata
   - prometheus
@@ -57,7 +57,7 @@ annotations:
       url: https://github.com/danielgines/brightdata-exporter/blob/main/CHANGELOG.md
   artifacthub.io/images: |
     - name: brightdata-exporter
-      image: ghcr.io/danielgines/brightdata-exporter:0.2.15
+      image: ghcr.io/danielgines/brightdata-exporter:0.2.16
   artifacthub.io/changes: |
     - kind: changed
       description: PodDisruptionBudget default shape now maxUnavailable=1 + unhealthyPodEvictionPolicy=AlwaysAllow (forward-compatible with issue #8); enabled=true by default. Old minAvailable=1 default was a documented anti-pattern for single-replica deployments.
