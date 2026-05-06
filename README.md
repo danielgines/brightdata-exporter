@@ -509,19 +509,26 @@ cosign verify ghcr.io/<owner>/brightdata-exporter@<digest> \
 ### ArtifactHub indexing
 
 The Helm chart is also published with verified-publisher metadata on
-[ArtifactHub](https://artifacthub.io). One-time setup:
+[ArtifactHub](https://artifacthub.io). ArtifactHub treats each chart
+as its own repository (it does **not** enumerate registry namespaces),
+so registration is per-chart with the chart's full OCI URL, not the
+parent namespace.
+
+One-time setup:
 
 1. Sign in at https://artifacthub.io with GitHub
-2. Add a Helm OCI repo pointing to `oci://ghcr.io/<owner>/charts`
+2. Add a Helm OCI repository pointing to
+   **`oci://ghcr.io/<owner>/charts/brightdata-exporter`** (chart
+   path — NOT just `…/charts`)
 3. Copy the assigned `repositoryID` into `helm/artifacthub-repo.yml`
 4. Commit, push, and run **`just artifacthub-publish`** (or trigger
-   the `artifacthub-publish` workflow from GitHub Actions UI)
+   the `artifacthub-publish` workflow from the GitHub Actions UI)
 
 After that, every chart release is auto-indexed by ArtifactHub on its
 next scrape (~30 min cadence). The verified-publisher badge requires
 the `artifacthub-repo.yml` artifact to be present at
-`oci://ghcr.io/<owner>/charts/artifacthub-repo:latest` with the right
-ID — that's what step 4 publishes.
+`oci://ghcr.io/<owner>/charts/brightdata-exporter/artifacthub-repo:latest`
+with the right ID — that's what step 4 publishes.
 
 ## License
 
