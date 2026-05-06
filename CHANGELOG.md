@@ -4,6 +4,81 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.16] — 2026-05-06
+
+### Changed — Helm chart PDB default shape (drain-friendly + compliance-friendly)
+
+`podDisruptionBudget.enabled` flips from `false` to `true`. The shipped
+shape changes from `minAvailable: 1` to `maxUnavailable: 1` plus
+`unhealthyPodEvictionPolicy: AlwaysAllow` (k8s 1.27+, GA 1.31).
+
+Why: `minAvailable: 1` on a single-replica deployment is a
+[documented anti-pattern](https://kubernetes.io/docs/tasks/run-application/configure-pdb/) —
+it BLOCKS node drains entirely, making the chart the cluster's
+maintenance blocker for zero protection benefit (one replica down ==
+service down, regardless of PDB). The new defaults:
+
+- Are a no-op while `replicas: 1` (drains succeed normally).
+- Become real protection automatically once `replicas >= 2` (issue
+  [#8](https://github.com/danielgines/brightdata-exporter/issues/8))
+  without any spec change — `maxUnavailable: 1` is the recommended
+  forward-compatible shape per the upstream docs.
+- Survive the "stuck NotReady/Terminating pod blocks all drains"
+  failure mode via `unhealthyPodEvictionPolicy: AlwaysAllow`.
+- Satisfy "every workload must have a PDB" compliance policies
+  (Kyverno, OPA Gatekeeper, ValidatingAdmissionPolicy) without the
+  drain-blocking downside.
+
+Operators who genuinely run `replicas >= 3` and prefer strict uptime
+over drain-friendliness can still override `minAvailable` (mutually
+exclusive with `maxUnavailable`).
+
+### Added — HorizontalPodAutoscaler template (compliance-only, opt-in)
+
+New `templates/hpa.yaml` behind `autoscaling.enabled` (default `false`).
+Defaults pin `minReplicas: maxReplicas: 1` — Kubernetes accepts
+`min == max`, the controller simply keeps the deployment at a fixed
+count rather than scaling. The rendered HPA carries explicit
+annotations:
+
+- `brightdata-exporter.io/hpa-purpose: "policy-compliance-only"`
+- `brightdata-exporter.io/non-elastic-tracking-issue: "https://github.com/danielgines/brightdata-exporter/issues/8"`
+
+so operators auditing the manifest see the intent. Raising
+`maxReplicas` above 1 BREAKS the service (Bright Data 429s,
+duplicate scrape cycles, overlapping Prometheus series) — see
+issue #8 for the architectural background.
+
+The chart now also OMITS `spec.replicas` on the Deployment when
+`autoscaling.enabled=true` so the HPA controller owns the field —
+prevents GitOps drift loops between Argo CD / Flux's chart-rendered
+count and the HPA-driven count.
+
+For clusters where the cleaner answer is a Kyverno `PolicyException`
+exempting this workload from a `require-hpa` policy, the README now
+documents that path alongside the opt-in HPA.
+
+### Added — configurable Deployment update strategy
+
+New `strategy` block in `values.yaml` (default `type: Recreate`,
+matching the previous hardcoded value). When the app moves to
+`replicas >= 2` (after issue #8), operators can switch to
+`type: RollingUpdate` and supply `rollingUpdate.maxSurge` /
+`rollingUpdate.maxUnavailable` without forking the chart.
+
+### Added — `podDisruptionBudget.annotations`
+
+Operator-supplied annotations on the rendered PodDisruptionBudget
+resource. Useful for owner/contact metadata, ArgoCD ignore
+directives, etc.
+
+### Added — `helm-template-full` smoke now covers `autoscaling.enabled=true`
+
+The CI smoke render that exercises every feature flag now also
+includes the new HPA template, catching template-time bugs in PR
+review the same way it catches them for ServiceMonitor /
+NetworkPolicy / auth.
+
 ## [0.2.15] — 2026-05-06
 
 ### Added — chart-specific `README.md` for ArtifactHub indexing

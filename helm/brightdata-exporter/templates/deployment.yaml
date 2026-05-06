@@ -5,9 +5,18 @@ metadata:
   labels:
     {{- include "brightdata-exporter.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.autoscaling.enabled }}
+  # When the HPA is enabled, omit `replicas` so the HPA controller owns the
+  # field — otherwise GitOps tools (Argo CD, Flux) loop, alternating between
+  # the chart-rendered count and the HPA-driven count on every reconcile.
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
   strategy:
-    type: Recreate  # only one replica is meaningful — no need for rolling updates
+    type: {{ .Values.strategy.type | default "Recreate" }}
+    {{- if and (eq (.Values.strategy.type | default "Recreate") "RollingUpdate") .Values.strategy.rollingUpdate }}
+    rollingUpdate:
+      {{- toYaml .Values.strategy.rollingUpdate | nindent 6 }}
+    {{- end }}
   selector:
     matchLabels:
       {{- include "brightdata-exporter.selectorLabels" . | nindent 6 }}

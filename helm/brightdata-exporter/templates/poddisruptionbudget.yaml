@@ -1,22 +1,33 @@
 {{- /*
-  PodDisruptionBudget — protects against involuntary disruption (node
-  drain, eviction). For a single-replica deployment this is a real
-  trade-off:
+  PodDisruptionBudget — satisfies "every workload must have a PDB"
+  compliance policies (Kyverno, OPA Gatekeeper, ValidatingAdmissionPolicy)
+  while staying drain-friendly for cluster operators.
 
-    - With a PDB and minAvailable=1: cluster admins CANNOT drain the
-      node hosting this pod for routine maintenance — the chart
-      becomes the blocker. That's the point if you want strict
-      uptime; it's an anti-pattern if you don't.
+  Default shape: maxUnavailable: 1 + unhealthyPodEvictionPolicy: AlwaysAllow.
+  Why this shape, not minAvailable: 1?
 
-    - Without a PDB (default): drains succeed instantly, the pod
-      reschedules to another node within ~10-60s, and there's a
-      brief window of unavailability.
+    - Today the app runs single-replica by design (issue #8 tracks the
+      multi-replica work). With minAvailable: 1 + replicas=1, drains are
+      BLOCKED entirely — node maintenance can't proceed. That's a
+      well-documented anti-pattern, not protection.
 
-  Most users want the default (no PDB) — uptime gap during a planned
-  drain is short, and not blocking maintenance is the responsible
-  cluster-citizen behavior. Set podDisruptionBudget.enabled=true only
-  when the unavailability window genuinely matters more than letting
-  cluster admins drain freely.
+    - With maxUnavailable: 1 + replicas=1, the PDB is effectively a
+      no-op (allows the only pod to be evicted) — drains succeed,
+      pod reschedules normally. Once the app moves to replicas>=2
+      (issue #8), the SAME spec becomes real protection: at most one
+      replica unavailable during voluntary disruption.
+
+    - unhealthyPodEvictionPolicy: AlwaysAllow (k8s 1.27+, GA 1.31)
+      prevents the "pod stuck in NotReady/Terminating locks all drains"
+      failure mode. Without it, a buggy pod can wedge cluster
+      maintenance until manually deleted.
+
+  Override `minAvailable` (mutually exclusive with `maxUnavailable`)
+  only if you genuinely want to block voluntary disruption — e.g.
+  after issue #8 lands and you run replicas>=3 with strict uptime.
+
+  See https://kubernetes.io/docs/tasks/run-application/configure-pdb/
+  for the canonical reference.
 */ -}}
 {{- if .Values.podDisruptionBudget.enabled }}
 apiVersion: policy/v1
@@ -25,13 +36,18 @@ metadata:
   name: {{ include "brightdata-exporter.fullname" . }}
   labels:
     {{- include "brightdata-exporter.labels" . | nindent 4 }}
+  {{- with .Values.podDisruptionBudget.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   {{- if .Values.podDisruptionBudget.minAvailable }}
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
-  {{- else if .Values.podDisruptionBudget.maxUnavailable }}
-  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
   {{- else }}
-  minAvailable: 1
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable | default 1 }}
+  {{- end }}
+  {{- with .Values.podDisruptionBudget.unhealthyPodEvictionPolicy }}
+  unhealthyPodEvictionPolicy: {{ . }}
   {{- end }}
   selector:
     matchLabels:
