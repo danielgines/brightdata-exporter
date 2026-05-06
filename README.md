@@ -1,7 +1,7 @@
 # brightdata-exporter
 
-[![PyPI](https://img.shields.io/pypi/v/brightdata-exporter)](https://pypi.org/project/brightdata-exporter/)
 [![Container](https://img.shields.io/badge/ghcr.io-brightdata--exporter-blue)](https://github.com/danielgines/brightdata-exporter/pkgs/container/brightdata-exporter)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/brightdata-charts)](https://artifacthub.io/packages/search?repo=brightdata-charts)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Observability + FinOps service for [Bright Data](https://brightdata.com).

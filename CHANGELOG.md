@@ -4,6 +4,56 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.13] — 2026-05-06
+
+### Changed — Python runtime 3.12 → 3.14
+
+Bumped the runtime base image from `python:3.12-slim-trixie` to
+`python:3.14-slim-trixie` (#7). Verified all our Python deps have
+appropriate wheels: pure-Python ones (httpx, prometheus-client,
+pydantic, pydantic-settings, structlog, etc) ship as `py3-none-any`
+which is forward-compatible; `pydantic-core` 2.46.3 already ships
+`cp314` wheels.
+
+Side fixes that PR #7 left for us to clean up:
+
+- **Header comment** updated to reflect Python 3.14.
+- **Builder image** also bumped: `ghcr.io/astral-sh/uv:0.8-python3.12-trixie-slim`
+  → `ghcr.io/astral-sh/uv:0.11-python3.14-trixie-slim`. PR #7 only
+  bumped the runtime stage; leaving the builder on 3.12 with a 3.14
+  runtime worked because our wheel is pure-Python, but is fragile —
+  any future native build step would surface ABI mismatch. Same Python
+  series across both stages eliminates that class of bug. (This
+  obsoletes the still-open dependabot PR #6 which proposed
+  `0.8 → 0.11`; we just took both bumps at once.)
+- **pip cleanup path** is now Python-version-agnostic. Previously
+  hardcoded `/usr/local/lib/python3.12/site-packages/pip*` which is a
+  no-op in a 3.14 image. Now derived at build time:
+  `python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])'`.
+  The defense-in-depth cleanup runs in any future Python series.
+
+Smoke-tested locally: `docker build` succeeds, container starts,
+`/healthz` returns 200, `pip` is fully removed from the runtime image
+(no `pip*` directories under `/usr/local/lib/python3.14/site-packages`).
+
+### Added — `concurrency` block on release.yaml
+
+Serializes release runs on the same branch with `cancel-in-progress:
+false`. Cancelling mid-release would leave GHCR in a half-pushed state
+(image at version X exists but no helm chart, no git tag, no GitHub
+Release) — far worse than a queued second run. The resolve job's
+commit-subject filter keeps non-release queue entries cheap (~16s
+skip) so this doesn't bottleneck normal CI.
+
+### Documentation
+
+- `[![PyPI]]` badge removed from README — we don't publish to PyPI
+  (operational decision, not a regression). Distribution is GHCR
+  (image + chart) + ArtifactHub (chart index).
+- `[![Artifact Hub]]` badge added — links to the chart's ArtifactHub
+  search result and shows publication status (verified-publisher
+  badge will appear once ArtifactHub finishes the next scrape cycle).
+
 ## [0.2.12] — 2026-05-06
 
 ### Changed — GitHub Actions toolchain refresh

@@ -35,6 +35,18 @@ permissions:
   id-token: write     # Cosign keyless signing via GitHub OIDC
   attestations: write # Provenance attestations attached to image
 
+# Serialize release runs on the same branch. `cancel-in-progress: false`
+# is intentional — once a release starts pushing artifacts to GHCR,
+# cancelling mid-run would leave the registry in a half-pushed state
+# (image at version X exists, helm chart doesn't, no git tag, no
+# GitHub Release). We'd rather queue the second run and let it
+# idempotently complete. The `resolve` job's commit-subject filter
+# already keeps non-release runs cheap (16s skip) so queueing them
+# alongside a real release isn't a meaningful drag.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # ---------------------------------------------------------------------
   # Resolve which version to release + whether to run at all.

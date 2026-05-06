@@ -3,12 +3,16 @@
 # brightdata-exporter — multi-stage build.
 #
 #   Stage 1 (builder): use uv to resolve + lock and build the wheel.
-#   Stage 2 (runtime): python:3.12-slim with the wheel + non-root user.
+#   Stage 2 (runtime): python:3.14-slim-trixie with the wheel + non-root user.
+#
+# Builder + runtime are pinned to the same Python series (3.14) so any
+# future native build steps (currently none — our wheel is pure-Python)
+# can't surface ABI mismatches between stages.
 #
 # Why uv: ~10x faster install than pip during CI builds. uv also produces
 # a deterministic uv.lock that the runtime stage consumes.
 
-FROM ghcr.io/astral-sh/uv:0.8-python3.12-trixie-slim AS builder
+FROM ghcr.io/astral-sh/uv:0.11-python3.14-trixie-slim AS builder
 
 WORKDIR /build
 
@@ -67,7 +71,9 @@ COPY --from=builder /build/dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl \
     && rm /tmp/*.whl \
     && pip uninstall -y pip setuptools \
-    && rm -rf /root/.cache/pip /usr/local/lib/python3.12/site-packages/pip* /usr/local/lib/python3.12/site-packages/setuptools*
+    && rm -rf /root/.cache/pip \
+    && PYSP=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])') \
+    && rm -rf "${PYSP}/pip"* "${PYSP}/setuptools"*
 
 USER brightdata
 WORKDIR /home/brightdata
