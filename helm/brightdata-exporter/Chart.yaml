@@ -15,8 +15,8 @@ description: |
   investigation dashboard (Infinity, picker-driven) and an Operations
   dashboard (Prometheus, continuous monitoring).
 type: application
-version: 0.2.13
-appVersion: "0.2.13"
+version: 0.2.14
+appVersion: "0.2.14"
 keywords:
   - brightdata
   - prometheus
@@ -36,3 +36,40 @@ maintainers:
 # `icon:` intentionally omitted — ArtifactHub rejects .ico files (only
 # accepts PNG/JPG/SVG/WebP). To add a logo later, host a PNG/SVG at a
 # public URL (e.g. raw.githubusercontent.com) and add it back here.
+
+# ArtifactHub-specific annotations. ArtifactHub picks these up during
+# scrape and uses them for category filtering, license detection, the
+# Containers Images tab (CVE scan integration), Quick links, and the
+# per-version Changelog tab. Equivalent to a separate artifacthub-pkg.yml
+# but kept inline so Chart.yaml stays the single source of truth.
+# `artifacthub.io/images` references the exact version tag of the
+# container image this chart deploys — kept in sync with Chart.version
+# by scripts/sync-version.py so it never drifts.
+annotations:
+  artifacthub.io/category: monitoring-logging
+  artifacthub.io/license: MIT
+  artifacthub.io/links: |
+    - name: source
+      url: https://github.com/danielgines/brightdata-exporter
+    - name: container image (GHCR)
+      url: https://github.com/danielgines/brightdata-exporter/pkgs/container/brightdata-exporter
+    - name: changelog
+      url: https://github.com/danielgines/brightdata-exporter/blob/main/CHANGELOG.md
+  artifacthub.io/images: |
+    - name: brightdata-exporter
+      image: ghcr.io/danielgines/brightdata-exporter:0.2.14
+  artifacthub.io/changes: |
+    - kind: added
+      description: ArtifactHub category, license, images, links annotations on Chart.yaml
+    - kind: added
+      description: PodDisruptionBudget template (opt-in, default disabled) — see values.yaml
+    - kind: added
+      description: automountServiceAccountToken=false default — exporter never calls k8s API, zero-trust default
+    - kind: added
+      description: terminationGracePeriodSeconds explicit (default 30) + configurable
+    - kind: added
+      description: priorityClassName opt-in via values.yaml for production scheduling
+    - kind: fixed
+      description: OCI label org.opencontainers.image.version was being set to 0.2 (semver minor pattern) instead of full version — now explicit
+    - kind: changed
+      description: setup-uv CI action bumped 3 → 7 (#3)

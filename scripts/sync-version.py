@@ -79,11 +79,13 @@ def sync_init_py(version: str) -> bool:
 
 
 def sync_chart_yaml(version: str) -> bool:
-    """Rewrite both ``version:`` and ``appVersion:`` in Chart.yaml.
+    """Rewrite ``version:``, ``appVersion:``, and the
+    ``artifacthub.io/images`` annotation's image tag in Chart.yaml.
 
-    Helm package + push will use exactly what's in this file at packaging
-    time (the release workflow does NOT pass --version overrides; the
-    file is the canonical chart version).
+    Helm package + push uses exactly what's in this file at packaging
+    time. The ArtifactHub `images` annotation references the same image
+    by exact tag so ArtifactHub's CVE scan integration always points at
+    the chart's matching container image.
     """
     changed_version = replace_in_file(
         CHART_YAML,
@@ -96,7 +98,18 @@ def sync_chart_yaml(version: str) -> bool:
         re.compile(r"^(appVersion:\s+).*$", re.MULTILINE),
         rf'\g<1>"{version}"',
     )
-    return changed_version or changed_app
+    # `artifacthub.io/images` annotation embeds the exact image tag.
+    # Match the line ``image: ghcr.io/.../brightdata-exporter:<tag>``
+    # and rewrite the tag to the canonical version.
+    changed_image = replace_in_file(
+        CHART_YAML,
+        re.compile(
+            r"(image:\s+ghcr\.io/[^\s:]+/brightdata-exporter:)[^\s]+",
+            re.MULTILINE,
+        ),
+        rf"\g<1>{version}",
+    )
+    return changed_version or changed_app or changed_image
 
 
 def main() -> int:

@@ -10,9 +10,17 @@ image:
 imagePullSecrets: []
 
 # Single-instance service — Bright Data API is rate-limited (1 req/s per
-# token) and the in-memory cache + single-flight semantics for /api/*
-# assume one process. Multiple replicas would duplicate scrapes AND fan
-# out cache misses independently, wasting API budget on both halves.
+# token) and the in-process cache + leaky-bucket rate limiter assume one
+# replica. With N replicas you'd get:
+#   - N× upstream rate (each replica paces independently → 429s)
+#   - N× cache misses (each replica has its own in-memory cache)
+#   - N× scrape jobs (each runs the periodic loop on its own timer)
+#   - Duplicate Prometheus series with overwriting labels
+# Horizontal scaling is tracked as architectural work in
+#   https://github.com/danielgines/brightdata-exporter/issues/8
+# Until that lands, replicaCount=1 is a contract — increasing it BREAKS
+# the app rather than scaling it. No HPA template is shipped for the
+# same reason.
 replicaCount: 1
 
 # -- Required: Bright Data API token. Pick ONE of:
@@ -139,10 +147,41 @@ affinity: {}
 podLabels: {}
 podAnnotations: {}
 
+# PriorityClassName — opt-in for production scheduling. Empty = use
+# cluster default. Common values: "system-cluster-critical" (preempt
+# almost anything) or "high-priority" (custom defined in cluster).
+# Leave empty unless your platform requires it.
+priorityClassName: ""
+
+# Graceful shutdown window. The HTTP server might be mid-scrape when
+# SIGTERM lands; this gives it time to drain in-flight requests + flush
+# the last metrics before kubelet sends SIGKILL. 30s is the k8s default
+# but explicitly setting it makes intent visible (and lets the operator
+# bump it for slow-network clusters).
+terminationGracePeriodSeconds: 30
+
 serviceAccount:
   create: true
   name: ""
   annotations: {}
+  # The exporter never calls the Kubernetes API — disable the projected
+  # SA token mount so there's no credential to leak even on a compromise.
+  # Some platforms (e.g. those running Kyverno's `restrict-sa-token-mounts`
+  # policy) REQUIRE this; the rest get a free zero-trust win. Set true
+  # only if you ever need the SA token for sidecar/audit/identity flows.
+  automountServiceAccountToken: false
+
+# PodDisruptionBudget — opt-in protection against involuntary disruption.
+# Default disabled because for a single-replica deployment, a PDB with
+# minAvailable=1 BLOCKS node drains (cluster admins can't do routine
+# maintenance). Enable only when uptime-during-drain matters more than
+# letting cluster admins drain freely. See templates/poddisruptionbudget.yaml
+# for the full reasoning.
+podDisruptionBudget:
+  enabled: false
+  # Pick ONE of: minAvailable OR maxUnavailable
+  minAvailable: 1
+  # maxUnavailable: 0
 
 # NetworkPolicy — restrict ingress to known scrapers and egress to the
 # Bright Data API + DNS. Opt-in by default because misconfigured policies

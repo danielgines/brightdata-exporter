@@ -4,6 +4,83 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.14] — 2026-05-06
+
+### Added — Helm chart compliance hardening
+
+Three opt-in / secure-by-default fields aligning the chart with strict
+Pod Security + Kyverno policy environments:
+
+- **`automountServiceAccountToken: false`** (new default) — set on
+  both the ServiceAccount AND the pod spec. The exporter never calls
+  the Kubernetes API, so the projected SA token is dead weight that
+  attackers could exfil. Some platforms run Kyverno's
+  `restrict-sa-token-mounts` policy that requires this; the rest get
+  a free zero-trust win.
+- **`terminationGracePeriodSeconds: 30`** explicit and configurable.
+  Default value is the same as the k8s implicit default but making
+  it visible documents the SIGTERM → drain → SIGKILL contract and
+  lets operators bump it for slow-network clusters.
+- **`priorityClassName: ""`** (opt-in). Empty by default = use cluster
+  default. Set in production to e.g. `system-cluster-critical` for
+  preemption protection.
+
+### Added — PodDisruptionBudget template (opt-in, default disabled)
+
+`templates/poddisruptionbudget.yaml` ships behind `podDisruptionBudget.enabled`
+(default `false`). For single-replica deployments, a PDB with
+`minAvailable: 1` BLOCKS node drains — making the chart the cluster's
+maintenance blocker. Default-off lets cluster admins drain freely;
+operators who genuinely need uptime-during-drain opt in.
+
+### Added — ArtifactHub annotations on Chart.yaml
+
+Rather than ship a separate `artifacthub-pkg.yml`, the chart now
+carries ArtifactHub-specific metadata in `Chart.yaml.annotations`
+(the Helm-idiomatic path used by prometheus-community / bitnami).
+Surfaces:
+
+- **Category** `monitoring-logging` for ArtifactHub search filters
+- **License** `MIT` (SPDX identifier)
+- **Containers Images tab** linking the GHCR image (CVE scan integration)
+- **Quick links** in the sidebar (source, container image, changelog)
+- **Per-version Changelog tab** populated via `artifacthub.io/changes`
+  list with structured kinds (added / fixed / changed)
+
+`scripts/sync-version.py` now also syncs the image tag in the
+`artifacthub.io/images` annotation alongside Chart.yaml's `version` +
+`appVersion` — single bump bumps all four references.
+
+### Fixed — OCI label `org.opencontainers.image.version`
+
+Was being stamped with `0.2` (the semver `{{major}}.{{minor}}`
+pattern from the metadata-action's tag generator) instead of the full
+release version. `docker/metadata-action`'s default-derived label
+overrides whatever the Dockerfile's `LABEL` directive carries. Fixed
+by passing an explicit `labels:` input to metadata-action that pins
+the full version.
+
+### Added — issue tracking for deferred work
+
+Three GitHub issues opened to track work that doesn't fit a single
+release:
+
+- [#8](https://github.com/danielgines/brightdata-exporter/issues/8)
+  HPA / multi-replica support — needs distributed rate limiter,
+  cache, leader-elected scrape, and per-replica metric labels.
+  Documented in `values.yaml` next to `replicaCount: 1` so operators
+  see the constraint before trying to scale.
+- [#9](https://github.com/danielgines/brightdata-exporter/issues/9)
+  `__main__.py` test coverage gap — entrypoint wiring + signal
+  handling untested. Tagged `good first issue`.
+- [#10](https://github.com/danielgines/brightdata-exporter/issues/10)
+  Docker Hub mirror — eval and implement when there's a real
+  user-asked-for-it signal.
+
+### Changed
+
+- `astral-sh/setup-uv@v3 → @v7` (#3)
+
 ## [0.2.13] — 2026-05-06
 
 ### Changed — Python runtime 3.12 → 3.14

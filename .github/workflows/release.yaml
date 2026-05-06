@@ -190,6 +190,13 @@ jobs:
             type=raw,value=${{ needs.resolve.outputs.version }}
             type=raw,value=latest
             type=semver,pattern={{major}}.{{minor}},value=${{ needs.resolve.outputs.tag }}
+          # Override metadata-action's auto-derived `image.version` label.
+          # Without this, the action picks up the LAST tag it generated
+          # (the major.minor pattern → `0.2`) and stamps THAT as the
+          # OCI version label, masking the full release version. Force
+          # the canonical X.Y.Z by setting it explicitly here.
+          labels: |
+            org.opencontainers.image.version=${{ needs.resolve.outputs.version }}
 
       - name: Build + push (multi-arch + SBOM + provenance, no cache)
         id: build
