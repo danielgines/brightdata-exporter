@@ -1,0 +1,506 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/danielgines/brightdata-exporter/helm/brightdata-exporter/values.schema.json",
+  "title": "brightdata-exporter chart values",
+  "description": "Bright Data observability + FinOps service. Single-replica by design — see https://github.com/danielgines/brightdata-exporter/issues/8 for the architectural background. Bounds for `config.*` mirror the pydantic Settings constraints in src/brightdata_exporter/config.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "nameOverride": {
+      "type": "string",
+      "description": "Override the chart name component used by the fullname helper."
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "description": "Replace the entire computed resource name. Use sparingly — `helm.sh/chart` and ArgoCD tracking IDs assume the default naming convention."
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Container image without a tag. Default `ghcr.io/danielgines/brightdata-exporter`."
+        },
+        "tag": {
+          "type": "string",
+          "description": "Image tag. Empty string falls back to .Chart.AppVersion (the chart-managed pinning)."
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "description": "Kubernetes imagePullPolicy."
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "description": "List of Secret references for pulling private images. Each entry is `{name: <secret-name>}`.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" }
+        },
+        "required": ["name"]
+      }
+    },
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1,
+      "description": "Single-replica contract. Raising this BREAKS the app: in-process rate limiter, cache, scrape loop, and Prometheus labels all assume one replica. Tracked as architectural work in issue #8 — until that lands, max=1 is enforced by this schema, not just convention."
+    },
+    "strategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Deployment update strategy. Default Recreate is correct while replicaCount=1; switch to RollingUpdate after issue #8 with replicas>=2.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["Recreate", "RollingUpdate"]
+        },
+        "rollingUpdate": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "maxSurge": { "type": ["integer", "string"] },
+            "maxUnavailable": { "type": ["integer", "string"] }
+          }
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Bright Data API token plumbing. Set `apiToken` for inline (dev) or `existingSecret` for production (ExternalSecret operator etc.). The exporter will fail to start if neither resolves to a valid token.",
+      "properties": {
+        "existingSecret": {
+          "type": "string",
+          "description": "Name of a pre-created Secret holding the upstream API token. Mutually exclusive with `apiToken`."
+        },
+        "existingSecretKey": {
+          "type": "string",
+          "description": "Secret key under `existingSecret` carrying the token. Defaults to BRIGHTDATA_API_TOKEN."
+        },
+        "apiToken": {
+          "type": "string",
+          "description": "Inline token value. Convenient for local dev; do NOT commit a real token. Mutually exclusive with `existingSecret`."
+        },
+        "apiAuthToken": {
+          "type": "string",
+          "description": "Optional bearer guarding /api/*. Empty leaves /api/* unauthenticated — only safe in trusted networks."
+        },
+        "existingAuthSecret": {
+          "type": "string",
+          "description": "Secret holding the /api/* bearer when separate from the API token Secret."
+        },
+        "existingAuthSecretKey": {
+          "type": "string",
+          "description": "Key under `existingAuthSecret`. Defaults to BRIGHTDATA_API_AUTH_TOKEN."
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Exporter configuration — every field is forwarded as a BRIGHTDATA_* environment variable. Bounds mirror pydantic Settings (src/brightdata_exporter/config.py).",
+      "properties": {
+        "apiBase": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://",
+          "description": "Bright Data API base URL. Override only for testing or corporate proxies."
+        },
+        "scrapeInterval": {
+          "type": "integer",
+          "minimum": 30,
+          "description": "Seconds between full scrape cycles. Each cycle issues 1 + N*3 requests (account + per-zone) at 1 req/s; ~45s minimum for 14 zones."
+        },
+        "periodDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 366,
+          "description": "Rolling window (days) for /zone/cost and /zone/bw."
+        },
+        "infoCacheSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "TTL for /zone?zone=NAME results. Plan/usage_limit changes are rare; 1h is safe."
+        },
+        "apiRateLimitRps": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Max requests/s to Bright Data. Default 1.0 matches the documented limit."
+        },
+        "apiTimeoutSeconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Per-request HTTP timeout."
+        },
+        "zonesFilter": {
+          "type": "string",
+          "description": "Optional regex on zone NAME. Empty = all non-deleted zones."
+        },
+        "includeDisabled": {
+          "type": "boolean",
+          "description": "If true, also scrape cost/bw for status=disabled zones."
+        },
+        "collectIpRosters": {
+          "type": "boolean",
+          "description": "Per-zone /zone/ips + /zone/route_vips. Plan-aware gated; rejected plans return 4xx and are silently skipped."
+        },
+        "collectRecentIps": {
+          "type": "boolean",
+          "description": "Account-wide /zone/recent_ips. Single cheap call."
+        },
+        "collectIpHealth": {
+          "type": "boolean",
+          "description": "/zone/ips/unavailable + /zone/proxies_pending_replacement. Silent-when-healthy alerting metrics."
+        },
+        "collectNetworkStatus": {
+          "type": "boolean",
+          "description": "/network_status/all. Bright Data's own report of the network's operational state."
+        },
+        "collectDomainConsumption": {
+          "type": "boolean",
+          "description": "/domains/bw + /domains/req. High cardinality (one series per zone*domain); off by default."
+        },
+        "apiEnabled": {
+          "type": "boolean",
+          "description": "Mount the on-demand REST endpoints. Set false to run as a metrics-only exporter."
+        },
+        "cacheTtlSeconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "TTL for cached /api/* responses. 0 disables cache (each request fans out fresh)."
+        },
+        "cacheMaxSize": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Max number of cached /api/* keys. LRU eviction past this."
+        },
+        "apiMinWindowDays": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum from/to window enforced on /api/zones*. Bright Data zeroes out billing for sub-day ranges; this clamp expands `from` backward when needed. 0 disables."
+        },
+        "logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warning", "warn", "error"],
+          "description": "Log verbosity. `warn` is normalized to `warning` at startup."
+        },
+        "logFormat": {
+          "type": "string",
+          "enum": ["json", "console"],
+          "description": "Log renderer. `json` for production; `console` for local dev (colors when TTY)."
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Prometheus Operator integration. Requires the prometheus-operator CRDs.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "interval": {
+          "type": "string",
+          "pattern": "^[0-9]+(ms|s|m|h)$",
+          "description": "Prometheus duration string (e.g. 60s, 5m)."
+        },
+        "scrapeTimeout": {
+          "type": "string",
+          "pattern": "^[0-9]+(ms|s|m|h)$"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "relabelings": {
+          "type": "array",
+          "description": "Raw Prometheus Operator RelabelConfig list, copied verbatim."
+        },
+        "metricRelabelings": {
+          "type": "array",
+          "description": "Raw RelabelConfig list applied to scraped metrics."
+        },
+        "honorLabels": { "type": "boolean" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "description": "Pod resources (requests + limits). Both blocks are recommended — Kyverno require-limits-style policies expect them.",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": ["string", "integer", "number"] },
+            "memory": { "type": ["string", "integer"] }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": ["string", "integer", "number"] },
+            "memory": { "type": ["string", "integer"] }
+          }
+        }
+      }
+    },
+    "podSecurityContext": {
+      "type": "object",
+      "description": "Pod-level securityContext. Defaults are PSS Restricted-compatible.",
+      "properties": {
+        "runAsNonRoot": { "type": "boolean" },
+        "runAsUser": { "type": "integer", "minimum": 0 },
+        "runAsGroup": { "type": "integer", "minimum": 0 },
+        "fsGroup": { "type": "integer", "minimum": 0 },
+        "seccompProfile": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["RuntimeDefault", "Unconfined", "Localhost"]
+            },
+            "localhostProfile": { "type": "string" }
+          }
+        }
+      }
+    },
+    "containerSecurityContext": {
+      "type": "object",
+      "description": "Container-level securityContext.",
+      "properties": {
+        "allowPrivilegeEscalation": { "type": "boolean" },
+        "readOnlyRootFilesystem": { "type": "boolean" },
+        "runAsNonRoot": { "type": "boolean" },
+        "runAsUser": { "type": "integer", "minimum": 0 },
+        "runAsGroup": { "type": "integer", "minimum": 0 },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "add": { "type": "array", "items": { "type": "string" } },
+            "drop": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Liveness/readiness probes. Both endpoints return 200 while the HTTP server responds — upstream Bright Data health is exposed as the `brightdata_up` metric, not via probe state.",
+      "properties": {
+        "liveness": { "$ref": "#/definitions/probe" },
+        "readiness": { "$ref": "#/definitions/probe" }
+      }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "tolerations": {
+      "type": "array",
+      "description": "Raw Kubernetes Toleration list."
+    },
+    "affinity": {
+      "type": "object",
+      "description": "Raw Kubernetes Affinity object."
+    },
+    "podLabels": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "priorityClassName": {
+      "type": "string",
+      "description": "Empty = use cluster default. Set to e.g. `system-cluster-critical` for production preemption protection."
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Window between SIGTERM and SIGKILL. 30s is the k8s default; bump for slow-network clusters where in-flight scrapes need more drain time."
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "automountServiceAccountToken": {
+          "type": "boolean",
+          "description": "Default false because the exporter never calls the Kubernetes API. Set true only if a sidecar needs the token."
+        }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Default ON, drain-friendly shape (maxUnavailable: 1 + AlwaysAllow). Forward-compatible with issue #8 (replicas>=2) — no spec change needed.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minAvailable": {
+          "type": ["integer", "string"],
+          "description": "Mutually exclusive with `maxUnavailable`. With replicas=1 this BLOCKS drains — anti-pattern, do not use until replicas>=3."
+        },
+        "maxUnavailable": {
+          "type": ["integer", "string"],
+          "description": "Default shape. With replicas=1 this is a no-op (drains succeed). With replicas>=2 it caps voluntary disruption at 1 pod."
+        },
+        "unhealthyPodEvictionPolicy": {
+          "type": "string",
+          "enum": ["IfHealthyBudget", "AlwaysAllow"],
+          "description": "AlwaysAllow (k8s 1.27+, GA 1.31) prevents stuck NotReady/Terminating pods from blocking drains."
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "HPA — COMPLIANCE-ONLY. The app is non-elastic; minReplicas == maxReplicas == 1 is enforced by this schema. Real elasticity is tracked in issue #8.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minReplicas": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1,
+          "description": "Pinned at 1 — see issue #8."
+        },
+        "maxReplicas": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1,
+          "description": "Pinned at 1 — raising this BREAKS the service (Bright Data 429s, duplicate scrapes, overlapping Prometheus series). See issue #8."
+        },
+        "targetCPUUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "CPU utilization target for the synthesized metric. Ignored when `metrics` is non-empty."
+        },
+        "metrics": {
+          "type": "array",
+          "description": "Raw HorizontalPodAutoscaler.spec.metrics list. When non-empty, replaces the synthesized CPU metric entirely. Required to be non-empty by HPA v2 — the chart synthesizes a CPU metric when this is empty so the rendered manifest is always valid."
+        },
+        "behavior": {
+          "type": "object",
+          "description": "Raw HPA v2 scaleUp/scaleDown behavior block."
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Opt-in. Requires a CNI that enforces NetworkPolicy (Calico, Cilium, Antrea, kube-router). flannel/kindnet/AWS VPC CNI without addons admit but do NOT filter — silent breakage.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "type": "array",
+              "description": "Raw NetworkPolicyPeer list. Empty + enabled=true denies all ingress."
+            }
+          }
+        },
+        "egress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowDNS": { "type": "boolean" },
+            "allowBrightDataAPI": { "type": "boolean" },
+            "extra": {
+              "type": "array",
+              "description": "Raw NetworkPolicyEgressRule list. Use for FQDN egress (Cilium/Calico Enterprise) or corporate proxy access."
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "probe": {
+      "type": "object",
+      "description": "Standard Kubernetes Probe. Either httpGet, tcpSocket, or exec is required.",
+      "properties": {
+        "httpGet": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string" },
+            "port": { "type": ["integer", "string"] },
+            "scheme": {
+              "type": "string",
+              "enum": ["HTTP", "HTTPS"]
+            },
+            "host": { "type": "string" },
+            "httpHeaders": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "value"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "value": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "tcpSocket": {
+          "type": "object",
+          "properties": {
+            "port": { "type": ["integer", "string"] },
+            "host": { "type": "string" }
+          }
+        },
+        "exec": {
+          "type": "object",
+          "properties": {
+            "command": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "successThreshold": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 },
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
