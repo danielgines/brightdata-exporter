@@ -4,6 +4,36 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.15] — 2026-05-06
+
+### Added — chart-specific `README.md` for ArtifactHub indexing
+
+ArtifactHub looks for a `README.md` at the **chart root** (next to
+`Chart.yaml`) inside the packaged `.tgz`, not in the repository root.
+Without it the package page showed "This package version does not
+provide a README file" — discoverability hit, since most users land
+on ArtifactHub before the GitHub repo.
+
+Added `helm/brightdata-exporter/README.md` covering:
+
+- **TL;DR install** — single `helm install oci://…` command
+- **Required configuration** — `auth.apiToken` + `auth.apiAuthToken`
+- **Common patterns** — production with ExternalSecret + ServiceMonitor;
+  locked-down NetworkPolicy; strict Pod Security / Kyverno alignment
+- **Single-replica contract** — explains why scaling breaks and links
+  to issue #8
+- **Values reference index** — pointers into `values.yaml` by section
+- **Image supply chain** — multi-arch + cosign verify command + SBOM
+  + provenance + Trivy gate disclosure
+
+The repo-root `README.md` stays focused on the project as a whole;
+the chart `README.md` is purely operational ("I want to install
+this chart, what do I do?"). Different audiences, no duplication.
+
+`helm package` automatically picks up `README.md` next to `Chart.yaml`
+— verified with `tar -tzf` showing `brightdata-exporter/README.md`
+in the resulting `.tgz`.
+
 ## [0.2.14] — 2026-05-06
 
 ### Added — Helm chart compliance hardening

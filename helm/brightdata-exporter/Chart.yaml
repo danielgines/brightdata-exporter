@@ -15,8 +15,8 @@ description: |
   investigation dashboard (Infinity, picker-driven) and an Operations
   dashboard (Prometheus, continuous monitoring).
 type: application
-version: 0.2.14
-appVersion: "0.2.14"
+version: 0.2.15
+appVersion: "0.2.15"
 keywords:
   - brightdata
   - prometheus
@@ -57,7 +57,7 @@ annotations:
       url: https://github.com/danielgines/brightdata-exporter/blob/main/CHANGELOG.md
   artifacthub.io/images: |
     - name: brightdata-exporter
-      image: ghcr.io/danielgines/brightdata-exporter:0.2.14
+      image: ghcr.io/danielgines/brightdata-exporter:0.2.15
   artifacthub.io/changes: |
     - kind: added
       description: ArtifactHub category, license, images, links annotations on Chart.yaml
