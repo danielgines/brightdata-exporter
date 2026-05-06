@@ -8,7 +8,7 @@
 # Why uv: ~10x faster install than pip during CI builds. uv also produces
 # a deterministic uv.lock that the runtime stage consumes.
 
-FROM ghcr.io/astral-sh/uv:0.8-python3.12-trixie-slim AS builder
+FROM ghcr.io/astral-sh/uv:0.11-python3.12-trixie-slim AS builder
 
 WORKDIR /build
 
