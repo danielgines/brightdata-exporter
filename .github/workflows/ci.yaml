@@ -117,7 +117,7 @@ jobs:
         # gate. The release.yaml build keeps caching on (it's the
         # multi-arch one and a stale layer there is caught by the
         # post-push trivy gate at no extra cost).
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           load: true
