@@ -526,9 +526,10 @@ One-time setup:
 
 After that, every chart release is auto-indexed by ArtifactHub on its
 next scrape (~30 min cadence). The verified-publisher badge requires
-the `artifacthub-repo.yml` artifact to be present at
-`oci://ghcr.io/<owner>/charts/brightdata-exporter/artifacthub-repo:latest`
-with the right ID — that's what step 4 publishes.
+the metadata artifact to be present at
+`ghcr.io/<owner>/charts/brightdata-exporter:artifacthub.io` (the same
+OCI repo as the chart, dedicated `artifacthub.io` tag) with the right
+`repositoryID` — that's what step 4 publishes.
 
 ## License
 

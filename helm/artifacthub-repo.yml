@@ -1,14 +1,15 @@
 # ArtifactHub repository metadata.
 #
 # This file is uploaded to GHCR as an OCI artifact at the path:
-#   oci://ghcr.io/danielgines/charts/brightdata-exporter/artifacthub-repo:latest
-# and is fetched by ArtifactHub during repository scans to verify that
-# the publisher controls the chart. ArtifactHub treats each chart as its
-# own repo (it does NOT enumerate registry namespaces), so this metadata
-# artifact is pushed PER CHART, not at the namespace level. The
-# repositoryID below must match what ArtifactHub assigned when
-# registering `oci://ghcr.io/danielgines/charts/brightdata-exporter`
-# (the chart's specific URL — never the parent namespace).
+#   ghcr.io/danielgines/charts/brightdata-exporter:artifacthub.io
+# (same OCI repo as the chart, but the dedicated `artifacthub.io` tag).
+# Layer media type: application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+#
+# Pushed via `just artifacthub-publish` or the artifacthub-publish
+# workflow. ArtifactHub fetches this artifact during scans to verify
+# that the publisher controls the chart. The repositoryID below must
+# match what ArtifactHub assigned when registering
+# `oci://ghcr.io/danielgines/charts/brightdata-exporter`.
 #
 # Update + re-publish only when these fields change (rare):
 #   - repositoryID is rotated for any reason

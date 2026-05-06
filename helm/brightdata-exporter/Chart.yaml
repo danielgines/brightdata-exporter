@@ -33,4 +33,6 @@ sources:
 maintainers:
   - name: Daniel Gines
     url: https://github.com/danielgines
-icon: https://brightdata.com/favicon.ico
+# `icon:` intentionally omitted — ArtifactHub rejects .ico files (only
+# accepts PNG/JPG/SVG/WebP). To add a logo later, host a PNG/SVG at a
+# public URL (e.g. raw.githubusercontent.com) and add it back here.

@@ -202,13 +202,13 @@ artifacthub-publish:
       export PATH="$HOME/.local/bin:$PATH"
     fi
     gh auth token | oras login ghcr.io --username "$(gh api user --jq .login)" --password-stdin
-    # ArtifactHub treats each chart as its own repo (does NOT enumerate
-    # namespaces), so the verification artifact path is per-chart.
+    # ArtifactHub fetches verification metadata from the SAME OCI repo
+    # as the chart, under the dedicated `artifacthub.io` tag.
     oras push \
-      ghcr.io/danielgines/charts/brightdata-exporter/artifacthub-repo:latest \
+      ghcr.io/danielgines/charts/brightdata-exporter:artifacthub.io \
       --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
       helm/artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
-    echo "✓ pushed artifacthub-repo metadata to ghcr.io/danielgines/charts/brightdata-exporter/artifacthub-repo:latest"
+    echo "✓ pushed metadata to ghcr.io/danielgines/charts/brightdata-exporter:artifacthub.io"
     echo "  ArtifactHub will pick it up on its next scan (~30 min)."
 
 # Release flow — bump pyproject + sync derived files + commit `chore(release): vX.Y.Z`

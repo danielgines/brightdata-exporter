@@ -46,13 +46,15 @@ jobs:
 
       - name: Push artifacthub-repo metadata
         run: |
-          # ArtifactHub treats each chart as its own repo (it does NOT
-          # enumerate registry namespaces), so the verification artifact
-          # MUST be pushed to the chart-specific path, not the parent
-          # namespace. One push per chart we ship — for now there's just
-          # `brightdata-exporter`.
+          # ArtifactHub fetches verification metadata from the SAME OCI
+          # repo as the chart, under the dedicated `artifacthub.io` tag
+          # (not a sub-path). Per docs:
+          #   "The repository metadata file is pushed to the registry
+          #    using a special tag named `artifacthub.io`."
+          # Layer media type is the canonical CNCF one ArtifactHub looks
+          # for. One push per chart we ship.
           oras push \
-            ghcr.io/${{ github.repository_owner }}/charts/brightdata-exporter/artifacthub-repo:latest \
+            ghcr.io/${{ github.repository_owner }}/charts/brightdata-exporter:artifacthub.io \
             --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
             helm/artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
           echo "::notice::ArtifactHub will pick up the metadata on its next scrape (~30 min)."

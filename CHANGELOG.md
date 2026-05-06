@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.11] — 2026-05-06
+
+### Fixed — ArtifactHub verification metadata path
+
+The verification metadata artifact was being pushed to a sub-path
+(`<chart>/artifacthub-repo:latest`) which ArtifactHub never reads.
+Per the [ArtifactHub OCI docs](https://artifacthub.io/docs/topics/repositories/helm-charts/),
+the artifact must use the **dedicated `artifacthub.io` tag on the
+SAME OCI repo as the chart**:
+
+  Wrong: `ghcr.io/<owner>/charts/<chart>/artifacthub-repo:latest`
+  Right: `ghcr.io/<owner>/charts/<chart>:artifacthub.io`
+
+That's why the package showed `verified_publisher: False` even after
+the metadata was pushed — ArtifactHub looked at the right tag and
+found nothing. Same fix in three places: workflow yaml, justfile
+recipe, README, in-file comment.
+
+### Fixed — drop unsupported `icon:` from Chart.yaml
+
+ArtifactHub's image handler accepts PNG / JPG / SVG / WebP but **not
+ICO**. With `icon: https://brightdata.com/favicon.ico` set, every scan
+emitted "image: unknown format" errors next to otherwise-valid index
+entries. Bright Data doesn't host their logo at a publicly-discoverable
+PNG/SVG URL we can confidently link to (404s on the obvious paths +
+trademark concerns about embedding a 3rd-party logo on a community
+project), so the icon field is removed entirely. ArtifactHub falls
+back to its default placeholder.
+
+To add a custom logo later, host a PNG/SVG at any public URL (e.g.
+a raw.githubusercontent.com path inside the repo, or a personal CDN)
+and re-add the `icon:` field.
+
 ## [0.2.10] — 2026-05-05
 
 ### Changed — GitHub Release page now mirrors the curated CHANGELOG section
