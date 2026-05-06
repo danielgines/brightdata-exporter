@@ -105,7 +105,7 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build image (no cache, fresh apt-get upgrade)
         # `no-cache: true` forces a clean build so the runtime stage's
         # `apt-get upgrade` actually pulls the latest Debian security
