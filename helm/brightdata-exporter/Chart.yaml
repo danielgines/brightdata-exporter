@@ -59,17 +59,13 @@ annotations:
     - name: brightdata-exporter
       image: ghcr.io/danielgines/brightdata-exporter:0.2.15
   artifacthub.io/changes: |
-    - kind: added
-      description: ArtifactHub category, license, images, links annotations on Chart.yaml
-    - kind: added
-      description: PodDisruptionBudget template (opt-in, default disabled) — see values.yaml
-    - kind: added
-      description: automountServiceAccountToken=false default — exporter never calls k8s API, zero-trust default
-    - kind: added
-      description: terminationGracePeriodSeconds explicit (default 30) + configurable
-    - kind: added
-      description: priorityClassName opt-in via values.yaml for production scheduling
-    - kind: fixed
-      description: OCI label org.opencontainers.image.version was being set to 0.2 (semver minor pattern) instead of full version — now explicit
     - kind: changed
-      description: setup-uv CI action bumped 3 → 7 (#3)
+      description: PodDisruptionBudget default shape now maxUnavailable=1 + unhealthyPodEvictionPolicy=AlwaysAllow (forward-compatible with issue #8); enabled=true by default. Old minAvailable=1 default was a documented anti-pattern for single-replica deployments.
+    - kind: added
+      description: HorizontalPodAutoscaler template (opt-in, default disabled) for clusters with mandatory-HPA policies. Defaults to minReplicas=maxReplicas=1 — compliance-only, not real elasticity (see issue #8).
+    - kind: added
+      description: Deployment.spec.replicas omitted automatically when autoscaling.enabled=true to avoid GitOps drift loops between chart and HPA controller.
+    - kind: added
+      description: Deployment update strategy now configurable via strategy.type and strategy.rollingUpdate (default Recreate; switch to RollingUpdate when running replicas>=2).
+    - kind: added
+      description: PodDisruptionBudget gains optional annotations field for operator-supplied metadata.

@@ -97,18 +97,69 @@ loop, metric labels) — see
 [issue #8](https://github.com/danielgines/brightdata-exporter/issues/8)
 for the full architectural picture.
 
-For maintenance-window protection, opt into the PodDisruptionBudget:
+The chart still ships compliance-friendly defaults for clusters that
+enforce "every workload must have a PDB / HPA":
+
+### PodDisruptionBudget — default ON
 
 ```yaml
 podDisruptionBudget:
-  enabled: true
-  minAvailable: 1
+  enabled: true                              # default
+  maxUnavailable: 1                          # default
+  unhealthyPodEvictionPolicy: AlwaysAllow    # default (k8s 1.27+)
 ```
 
-Note the trade-off: `minAvailable: 1` on a single-replica deployment
-**blocks node drains**. Most clusters prefer the default-off so admins
-can drain freely; the brief unavailability during reschedule (~10-60s)
-is acceptable.
+Why `maxUnavailable: 1` and not `minAvailable: 1`?
+
+- With `replicas: 1` (today), `minAvailable: 1` BLOCKS node drains —
+  a [documented anti-pattern](https://kubernetes.io/docs/tasks/run-application/configure-pdb/).
+  `maxUnavailable: 1` lets drains succeed normally; the pod
+  reschedules in ~10-60s. The PDB is effectively a no-op while
+  single-replica, but ticks the compliance box without hurting ops.
+- After [issue #8](https://github.com/danielgines/brightdata-exporter/issues/8)
+  lands and you run `replicas >= 2`, the SAME spec becomes real
+  protection — at most one replica unavailable during voluntary
+  disruption — without any manifest change.
+- `unhealthyPodEvictionPolicy: AlwaysAllow` prevents the "stuck
+  NotReady/Terminating pod blocks all drains" failure mode.
+
+To disable entirely (e.g. if your cluster has a `generate-pdb`
+mutator policy and you want to defer to it):
+
+```yaml
+podDisruptionBudget:
+  enabled: false
+```
+
+### HorizontalPodAutoscaler — default OFF, opt-in for compliance only
+
+```yaml
+autoscaling:
+  enabled: true                              # opt-in
+  minReplicas: 1
+  maxReplicas: 1                             # hard contract — see issue #8
+  targetCPUUtilizationPercentage: 80
+```
+
+This template exists ONLY to satisfy "every Deployment must have an
+HPA" policies (Kyverno `check-hpa-exists`, equivalents). The default
+shape pins replicas at 1 with `min == max` — Kubernetes accepts this,
+the HPA controller simply keeps the deployment at a fixed count.
+
+**Do NOT raise `maxReplicas` above 1** until issue #8 is resolved —
+the app will 429 on Bright Data, duplicate scrape cycles, and emit
+overlapping Prometheus series. The chart annotates the rendered HPA
+with `brightdata-exporter.io/hpa-purpose: policy-compliance-only` so
+operators auditing the manifest see the intent.
+
+When `autoscaling.enabled=true`, the chart also OMITS `spec.replicas`
+on the Deployment so the HPA owns the field — avoids GitOps drift
+loops with Argo CD / Flux.
+
+If your governance allows it, the cleaner alternative is a
+[Kyverno `PolicyException`](https://kyverno.io/docs/guides/exceptions/)
+exempting this workload from the HPA-required policy, with a
+reference to issue #8 in the description.
 
 ## Values reference
 
@@ -127,7 +178,9 @@ Key sections, in the same order:
 - `priorityClassName` — opt-in for production preemption protection
 - `terminationGracePeriodSeconds` — SIGTERM-to-SIGKILL window (default 30)
 - `serviceAccount.*` — SA + projected-token settings
-- `podDisruptionBudget.*` — opt-in PDB
+- `strategy.*` — Deployment update strategy (default `Recreate`)
+- `podDisruptionBudget.*` — PDB (default ON, drain-friendly shape)
+- `autoscaling.*` — HPA (default OFF; compliance-only `min=max=1` when ON)
 - `networkPolicy.*` — opt-in ingress/egress restriction
 
 ## Container image

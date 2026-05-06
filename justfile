@@ -79,6 +79,7 @@ helm-template-full:
       --set auth.apiAuthToken=fake \
       --set networkPolicy.enabled=true \
       --set serviceMonitor.enabled=true \
+      --set autoscaling.enabled=true \
       > /dev/null
     @echo "✓ helm template renders with all features enabled"
 

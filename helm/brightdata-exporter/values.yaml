@@ -19,9 +19,20 @@ imagePullSecrets: []
 # Horizontal scaling is tracked as architectural work in
 #   https://github.com/danielgines/brightdata-exporter/issues/8
 # Until that lands, replicaCount=1 is a contract — increasing it BREAKS
-# the app rather than scaling it. No HPA template is shipped for the
-# same reason.
+# the app rather than scaling it. The shipped HPA (see `autoscaling`
+# below) is COMPLIANCE-ONLY and pins replicas at 1 (min == max).
 replicaCount: 1
+
+# Deployment update strategy. Defaults to Recreate because replicaCount=1:
+# rolling update with a single replica means N seconds of downtime
+# regardless, and Recreate is simpler / faster. When you eventually run
+# replicaCount>=2 (after issue #8 lands), override `type: RollingUpdate`
+# (you can supply `rollingUpdate` to fine-tune surge/unavailable).
+strategy:
+  type: Recreate
+  # rollingUpdate:
+  #   maxSurge: 1
+  #   maxUnavailable: 0
 
 # -- Required: Bright Data API token. Pick ONE of:
 #
@@ -171,17 +182,72 @@ serviceAccount:
   # only if you ever need the SA token for sidecar/audit/identity flows.
   automountServiceAccountToken: false
 
-# PodDisruptionBudget — opt-in protection against involuntary disruption.
-# Default disabled because for a single-replica deployment, a PDB with
-# minAvailable=1 BLOCKS node drains (cluster admins can't do routine
-# maintenance). Enable only when uptime-during-drain matters more than
-# letting cluster admins drain freely. See templates/poddisruptionbudget.yaml
-# for the full reasoning.
+# PodDisruptionBudget — satisfies "every workload must have a PDB"
+# compliance policies AND stays drain-friendly. Default ON because the
+# shipped shape (maxUnavailable: 1 + unhealthyPodEvictionPolicy:
+# AlwaysAllow) has zero operational downside:
+#
+#   - With replicas=1 (today): the PDB is a no-op, drains succeed normally,
+#     pod reschedules on the new node within ~10-60s. No worse than
+#     having no PDB at all, but ticks the compliance box.
+#   - With replicas>=2 (after issue #8): the SAME spec becomes real
+#     protection — at most one replica unavailable during voluntary
+#     disruption, no manifest change required.
+#   - unhealthyPodEvictionPolicy: AlwaysAllow (k8s 1.27+) prevents the
+#     "stuck NotReady/Terminating pod blocks all drains" failure mode.
+#
+# Override `minAvailable` (mutually exclusive with `maxUnavailable`)
+# only after you genuinely run replicas>=3 and want strict uptime over
+# drain-friendliness. With replicas=1, minAvailable=1 is a documented
+# anti-pattern — DO NOT use it.
+#
+# See https://kubernetes.io/docs/tasks/run-application/configure-pdb/.
 podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  # minAvailable: 1                  # mutually exclusive with maxUnavailable
+  annotations: {}                    # extra annotations on the PDB resource
+
+# HorizontalPodAutoscaler — COMPLIANCE-ONLY. The app is non-elastic by
+# design (in-process rate limiter + cache + scrape loop, see issue #8),
+# so the shipped HPA pins replicas at 1 with min == max. Kubernetes
+# accepts this — the controller simply keeps the deployment at a fixed
+# count rather than scaling.
+#
+# Enable this when your cluster runs a "every Deployment must have an
+# HPA" policy (Kyverno check-hpa-exists, OPA Gatekeeper equivalents,
+# etc.). When `enabled: true`, the chart also OMITS spec.replicas on
+# the Deployment so the HPA owns the field (avoids GitOps drift loops).
+#
+# DO NOT raise maxReplicas above 1 until issue #8 is resolved — it
+# will BREAK the service (Bright Data 429s + duplicate scrapes +
+# duplicate Prometheus series). The defaults intentionally pin both
+# bounds at 1 to keep operators from accidentally scaling the app out.
+#
+# `metrics` lets you supply the full HPA v2 metrics block verbatim
+# (raw HorizontalPodAutoscaler.spec.metrics list). When empty, the
+# chart synthesizes a CPU-utilization metric — required because HPA v2
+# rejects an empty metrics list, even when min == max.
+autoscaling:
   enabled: false
-  # Pick ONE of: minAvailable OR maxUnavailable
-  minAvailable: 1
-  # maxUnavailable: 0
+  minReplicas: 1
+  maxReplicas: 1                     # hard contract — see issue #8
+  targetCPUUtilizationPercentage: 80
+  # `metrics` overrides the synthesized CPU metric entirely. Use this
+  # when your platform's HPA-policy requires e.g. a memory metric or a
+  # custom Prometheus metric. Each entry is a raw HPA v2 metric object.
+  metrics: []
+  # Example — memory-based metric:
+  # metrics:
+  #   - type: Resource
+  #     resource:
+  #       name: memory
+  #       target:
+  #         type: Utilization
+  #         averageUtilization: 80
+  behavior: {}                        # HPA v2 scaleUp/scaleDown behavior
+  annotations: {}                     # extra annotations on the HPA resource
 
 # NetworkPolicy — restrict ingress to known scrapers and egress to the
 # Bright Data API + DNS. Opt-in by default because misconfigured policies

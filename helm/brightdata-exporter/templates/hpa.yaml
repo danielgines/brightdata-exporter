@@ -1,0 +1,64 @@
+{{- /*
+  HorizontalPodAutoscaler — COMPLIANCE-ONLY by design.
+
+  This app is non-elastic: an in-process token-bucket rate limiter,
+  in-process TTL cache, and an in-process scrape timer all assume one
+  replica. Scaling out BREAKS the app:
+
+    - N replicas × ~1 req/s/token → exceeds Bright Data's documented
+      1 req/s/token policy → 429 throttling on every cycle.
+    - N independent scrape loops → N× upstream traffic per minute.
+    - N independent caches → N× fan-out per /api/* dashboard view.
+    - Duplicate Prometheus series with overlapping labels.
+
+  This template exists so operators in clusters with mandatory-HPA
+  policies (Kyverno check-hpa-exists and equivalents) can satisfy the
+  policy WITHOUT activating real elasticity. Default shape is
+  minReplicas: 1 + maxReplicas: 1 — Kubernetes accepts min == max,
+  the HPA controller simply pins the deployment to a fixed replica
+  count rather than scaling it.
+
+  Real elasticity is tracked in issue #8 — distributed rate limiter +
+  shared cache + leader-elected scrape. When that lands, this chart
+  will revisit max-replicas defaults. Until then, raising maxReplicas
+  in your overrides will degrade the service.
+
+  See https://github.com/danielgines/brightdata-exporter/issues/8 for
+  the architectural background.
+*/ -}}
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "brightdata-exporter.fullname" . }}
+  labels:
+    {{- include "brightdata-exporter.labels" . | nindent 4 }}
+  annotations:
+    brightdata-exporter.io/hpa-purpose: "policy-compliance-only"
+    brightdata-exporter.io/non-elastic-tracking-issue: "https://github.com/danielgines/brightdata-exporter/issues/8"
+    {{- with .Values.autoscaling.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "brightdata-exporter.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.autoscaling.metrics }}
+    {{- toYaml .Values.autoscaling.metrics | nindent 4 }}
+    {{- else }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage | default 80 }}
+    {{- end }}
+  {{- with .Values.autoscaling.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
