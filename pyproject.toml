@@ -1,6 +1,6 @@
 [project]
 name = "brightdata-exporter"
-version = "0.2.11"
+version = "0.2.12"
 description = "Bright Data observability + FinOps service — Prometheus /metrics for alerting + REST /api/* for ad-hoc queries with caller-supplied date ranges."
 readme = "README.md"
 requires-python = ">=3.11"
