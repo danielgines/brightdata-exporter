@@ -15,8 +15,8 @@ description: |
   investigation dashboard (Infinity, picker-driven) and an Operations
   dashboard (Prometheus, continuous monitoring).
 type: application
-version: 0.2.16
-appVersion: "0.2.16"
+version: 0.2.17
+appVersion: "0.2.17"
 keywords:
   - brightdata
   - prometheus
@@ -57,7 +57,7 @@ annotations:
       url: https://github.com/danielgines/brightdata-exporter/blob/main/CHANGELOG.md
   artifacthub.io/images: |
     - name: brightdata-exporter
-      image: ghcr.io/danielgines/brightdata-exporter:0.2.16
+      image: ghcr.io/danielgines/brightdata-exporter:0.2.17
   artifacthub.io/changes: |
     - kind: added
       description: values.schema.json — machine-readable JSON Schema for chart values. Enforced on every helm install/upgrade/template; catches typos, out-of-range numbers, invalid enums, and pins the non-elastic contract (replicaCount, autoscaling.{min,max}Replicas all bounded to 1). Surfaces the Values Schema badge on ArtifactHub.

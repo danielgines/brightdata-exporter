@@ -5,4 +5,4 @@ endpoints under /api/* for ad-hoc FinOps queries with caller-supplied
 date ranges.
 """
 
-__version__ = "0.2.16"
+__version__ = "0.2.17"
