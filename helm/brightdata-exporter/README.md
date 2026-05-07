@@ -163,8 +163,23 @@ reference to issue #8 in the description.
 
 ## Values reference
 
-See [`values.yaml`](./values.yaml) for the full annotated reference.
-Key sections, in the same order:
+See [`values.yaml`](./values.yaml) for the full annotated reference and
+[`values.schema.json`](./values.schema.json) for the machine-readable
+JSON Schema. The schema is enforced on every `helm install`, `upgrade`,
+and `template`, catching:
+
+- Type mismatches and typos at the top level (`relicaCount: 1` →
+  rejected at admission).
+- Out-of-range numbers (e.g. `config.scrapeInterval: 10` below the
+  30s minimum).
+- Invalid enum values (e.g. `image.pullPolicy: Sometimes`).
+- The non-elastic contract: `replicaCount`, `autoscaling.minReplicas`,
+  and `autoscaling.maxReplicas` are all schema-pinned at 1 (raising
+  any of them would 429 the upstream API and break the in-process
+  cache + scrape loop). Tracked in
+  [issue #8](https://github.com/danielgines/brightdata-exporter/issues/8).
+
+Key sections of `values.yaml`, in the same order:
 
 - `image.*` — repository, tag, pullPolicy, pullSecrets
 - `auth.*` — token plumbing (inline / existingSecret / external)

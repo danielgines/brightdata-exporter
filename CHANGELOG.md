@@ -4,6 +4,51 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added — Helm chart `values.schema.json` (with the non-elastic contract baked in)
+
+The chart now ships a JSON Schema (draft-07) at the chart root,
+covering every field in `values.yaml`. Helm enforces the schema on
+every `install`, `upgrade`, `template`, and `lint` run — invalid
+values are rejected client-side with a structured error message
+before the manifest is rendered.
+
+Concretely the schema:
+
+- Locks down the **top-level vocabulary** with `additionalProperties:
+  false`, so `relicaCount: 1` (typo) is rejected at admission rather
+  than silently ignored.
+- Enforces the **non-elastic contract** as machine-readable
+  invariants — `replicaCount`, `autoscaling.minReplicas`, and
+  `autoscaling.maxReplicas` are all bounded to exactly 1. Operators
+  who try to scale the app out get a fast, specific error pointing
+  at the schema instead of a runtime 429 storm against Bright Data.
+  When [issue #8](https://github.com/danielgines/brightdata-exporter/issues/8)
+  is resolved, the bounds relax in one place.
+- Mirrors the **pydantic Settings constraints** in
+  `src/brightdata_exporter/config.py` — `config.scrapeInterval`
+  rejects values below 30, `config.periodDays` is clamped to 1-366,
+  rate/cache fields enforce their `gt=` / `ge=` boundaries.
+- Pins **closed-vocabulary enums**: `image.pullPolicy`, `service.type`,
+  `strategy.type`, `config.logLevel`, `config.logFormat`,
+  `podDisruptionBudget.unhealthyPodEvictionPolicy`,
+  `podSecurityContext.seccompProfile.type`. Catches values like
+  `pullPolicy: Sometimes` or `logLevel: verbose` at admission.
+- Validates **probes** against the standard Kubernetes Probe shape
+  (httpGet + tcpSocket + exec, with port/path/scheme constraints).
+
+ArtifactHub picks up the schema from the packaged `.tgz` and renders
+the **Values Schema** badge plus an interactive schema browser on
+the chart page.
+
+Free-form blocks (`*.annotations`, `*.labels`, `nodeSelector`,
+`tolerations`, `affinity`, `serviceMonitor.relabelings`,
+`autoscaling.metrics`, `autoscaling.behavior`,
+`networkPolicy.ingress.from`, `networkPolicy.egress.extra`) intentionally
+allow operator-supplied content so the schema doesn't constrain
+upstream Kubernetes API shapes that we don't want to vendor.
+
 ## [0.2.16] — 2026-05-06
 
 ### Changed — Helm chart PDB default shape (drain-friendly + compliance-friendly)

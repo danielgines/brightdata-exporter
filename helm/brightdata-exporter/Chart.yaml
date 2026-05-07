@@ -59,13 +59,5 @@ annotations:
     - name: brightdata-exporter
       image: ghcr.io/danielgines/brightdata-exporter:0.2.16
   artifacthub.io/changes: |
-    - kind: changed
-      description: PodDisruptionBudget default shape now maxUnavailable=1 + unhealthyPodEvictionPolicy=AlwaysAllow (forward-compatible with issue #8); enabled=true by default. Old minAvailable=1 default was a documented anti-pattern for single-replica deployments.
     - kind: added
-      description: HorizontalPodAutoscaler template (opt-in, default disabled) for clusters with mandatory-HPA policies. Defaults to minReplicas=maxReplicas=1 — compliance-only, not real elasticity (see issue #8).
-    - kind: added
-      description: Deployment.spec.replicas omitted automatically when autoscaling.enabled=true to avoid GitOps drift loops between chart and HPA controller.
-    - kind: added
-      description: Deployment update strategy now configurable via strategy.type and strategy.rollingUpdate (default Recreate; switch to RollingUpdate when running replicas>=2).
-    - kind: added
-      description: PodDisruptionBudget gains optional annotations field for operator-supplied metadata.
+      description: values.schema.json — machine-readable JSON Schema for chart values. Enforced on every helm install/upgrade/template; catches typos, out-of-range numbers, invalid enums, and pins the non-elastic contract (replicaCount, autoscaling.{min,max}Replicas all bounded to 1). Surfaces the Values Schema badge on ArtifactHub.
