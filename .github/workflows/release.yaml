@@ -365,7 +365,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "::notice::extracted $(wc -l < /tmp/notes.md) lines from CHANGELOG.md"
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.resolve.outputs.tag }}
           name: ${{ needs.resolve.outputs.tag }}
