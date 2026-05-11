@@ -90,7 +90,7 @@ jobs:
           skip-dirs: .venv,.pytest_cache,.mypy_cache,htmlcov
       - name: Upload SARIF to GitHub Security
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
@@ -147,13 +147,13 @@ jobs:
           exit-code: "0"
       - name: Upload SARIF (CRITICAL)
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-image.sarif
           category: trivy-image-critical
       - name: Upload SARIF (HIGH)
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-image-high.sarif
           category: trivy-image-high
